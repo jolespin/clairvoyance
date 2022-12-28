@@ -1,0 +1,36 @@
+{% set name = "clairvoyance" %}
+{% set version = "2022.12.27" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+  script: $PYTHON -m pip install --no-deps --ignore-installed .
+
+source:
+  url: https://github.com/jolespin/genopype/releases/download/v{{version}}/clairvoyance-{{version}}.tar.gz
+
+build:
+  noarch: python
+  number: 0
+
+requirements:
+  build:
+    - python
+  run:
+    - python >=3.6
+    - numpy >=1.13
+    - scipy >= 1.0
+    - pandas >=1.2.4
+    - xarray >= 0.10.3
+    - scikit-learn >=1.0
+    - matplotlib >=2
+    - seaborn >=0.10.1
+    - tqdm >=4.19
+    - soothsayer_utils >=2022.6.24
+
+about:
+  home: https://github.com/jolespin/clairvoyance
+  license: BSD-3
+  license_family: BSD
+  summary: 'Feature selection via recursive feature inclusion'
+  description: 'Feature selection via recursive feature inclusion'
