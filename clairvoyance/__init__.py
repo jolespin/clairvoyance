@@ -26,7 +26,7 @@
 # =======
 # Version
 # =======
-__version__= "2023.01.01"
+__version__= "2023.01.03"
 __author__ = "Josh L. Espinoza"
 __email__ = "jespinoz@jcvi.org, jol.espinoz@gmail.com"
 __url__ = "https://github.com/jolespin/clairvoyance"
@@ -40,7 +40,7 @@ functions = {
   "format_cross_validation",
   "get_feature_importance_attribute",
   "recursive_feature_inclusion",
-  "plot_scores","plot_weights_bar",
+  "plot_scores_line","plot_weights_bar",
   "plot_weights_box",
   "plot_recursive_feature_selection",
 }

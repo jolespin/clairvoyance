@@ -12,13 +12,17 @@ Reimplementation for `Clairvoyance` from [Espinoza & Dupont et al. 2021](https:/
 #### Details:
 `import clairvoyance as cy`
 
-`__version__ = "2022.01.01"`
+`__version__ = "2022.01.03"`
 
 #### Installation
 
 ```
+# Stable:
 pip install clairvoyance_feature_selection
 conda install -c jolespin clairvoyance
+
+# Developmental:
+pip install git+https://github.com/jolespin/clairvoyance
 ```
 
 #### Citation
@@ -30,7 +34,7 @@ Espinoza JL, Dupont CL, O’Rourke A, Beyhan S, Morales P, Spoering A, et al. (2
 
 
 ##### Feature selection based on classification tasks
-Here's a basic classifcation using a `LogisticRegression` model and a grid search for different `C` and `penalty` parameters. We add 996 noise variables within the range of values as the original Iris features. After that we normalize them so their scale is standardized.  In this case, we are optimizing for `accuracy`.
+Here's a basic classifcation using a `LogisticRegression` model and a grid search for different `C` and `penalty` parameters. We add 996 noise variables within the range of values as the original Iris features. After that we normalize them so their scale is standardized.  In this case, we are optimizing for `accuracy`.  We are using a `LogisticRegression` where we don't really have to worry about features with zero weight in the end so we are going to set `    remove_zero_weighted_features=False`.  This will allow us to plot a nice RCI curve with error.
 
 ```python
 import clairvoyance as cy
@@ -75,6 +79,8 @@ clf = cy.ClairvoyanceClassification(
     estimator=estimator, 
     param_grid=param_grid, 
     verbose=1,
+    remove_zero_weighted_features=False,
+
 )
 clf.fit(X_normalized, y)#, sort_hyperparameters_by=["C", "penalty"], ascending=[True, False])
 history = clf.recursive_feature_inclusion(early_stopping=10)
@@ -90,7 +96,7 @@ clf.plot_weights(weight_type="cross_validation")
 ```
 ![](images/2.png)
 
-There are still a few noise variables, though with much lower weight, suggesting our classifier is modeling noise.  We can add an additional penalty where a change in score must exceed a threshold to add a new feature during the recursive feature inclusion algorithm. 
+There are still a few noise variables, though with much lower weight, suggesting our classifier is modeling noise.  We can add an additional penalty where a change in score must exceed a threshold to add a new feature during the recursive feature inclusion algorithm.  We are keeping `    remove_zero_weighted_features=False` for this example.
 
 ```python
 history = clf.recursive_feature_inclusion(early_stopping=10, minimum_improvement_in_score=0.05)
@@ -118,6 +124,7 @@ clf_binary = cy.ClairvoyanceClassification(
     n_draws=10, 
     estimator=estimator, 
     param_grid=param_grid, 
+    remove_zero_weighted_features=False,
     verbose=1,
 )
 
@@ -138,7 +145,9 @@ clf_binary.plot_weights(weight_type="cross_validation")
 ![](images/5.png)
 
 ##### Feature selection based on regression tasks
-Here's a basic regression using a `DecisionTreeRegressor` model and a grid search for different `min_samples_leaf` and `min_samples_split` parameters. We add 87 noise variables and normalize all of the features so their scale is standardized.  In this case, we are optimizing for `neg_root_mean_squared_error`.  We are using a validation set of ~16% of the data during our recursive feature inclusion. 
+Here's a basic regression using a `DecisionTreeRegressor` model and a grid search for different `min_samples_leaf` and `min_samples_split` parameters. We add 87 noise variables and normalize all of the features so their scale is standardized.  In this case, we are optimizing for `neg_root_mean_squared_error`.  We are using a validation set of ~16% of the data during our recursive feature inclusion. For decision trees, we have the issue of getting zero-weighted features which are uninformative and misleading for RCI.  To get around this, we implement a recursive feature removal that only keeps non-zero weighted features.  We can turn this on via `remove_zero_weighted_features=True`.  This also ensures that there are no redundant feature sets (not an issue when `remove_zero_weighted_features=False` because they are recursively added).  
+
+Note: When we use `remove_zero_weighted_features=True`, we get a scatter plot instead of a line plot with error because there are multiple feature sets (each with their own performance distribution on the CV set) that may have the same number of features.
 
 ```python
 from sklearn.datasets import load_boston
@@ -164,7 +173,15 @@ estimator = DecisionTreeRegressor(random_state=0)
 param_grid = {"min_samples_leaf":[1,2,3,5,8],"min_samples_split":{ 0.1618, 0.382, 0.5, 0.618}}
 
 # Fit model
-reg = cy.ClairvoyanceRegression(name="Boston", n_jobs=-1, n_draws=10, estimator=estimator, param_grid=param_grid, verbose=1)
+reg = cy.ClairvoyanceRegression(
+	name="Boston", 
+	n_jobs=-1, 
+	n_draws=10, 
+	estimator=estimator, 
+	param_grid=param_grid, 
+	verbose=1,
+	remove_zero_weighted_features=True,
+)
 reg.fit(X_training, y_training)
 history = reg.recursive_feature_inclusion(early_stopping=10, X=X_validation, y=y_validation)
 history.head()
@@ -178,7 +195,7 @@ reg.plot_weights(weight_type="cross_validation")
 ```
 ![](images/7.png)
 
-Let's use the weighted fitted with a `DecisionTreeRegressor` but use an ensemble `RandomForestRegressor` for the actual feature inclusion algorithm. 
+There's some noise features that make it through using `DecisionTreeRegressor` models.  Instead of adding a penalty, let's use the weights fitted with a `DecisionTreeRegressor` but use an ensemble `RandomForestRegressor` for the actual feature inclusion algorithm. 
 
 ```python
 from sklearn.ensemble import RandomForestRegressor
@@ -188,6 +205,8 @@ reg.plot_weights()
 reg.plot_weights(weight_type="cross_validation")
 ```
 ![](images/8.png)
+
+That's much better...
 
 ##### Recursive feature selection based on classification tasks
 Here we are running `Clairvoyance` recursively identifying several feature sets that work with different hyperparameters to get a range of feature sets to select from in the end.  We will iterate through all of the hyperparamater configurations, recursively feed in the data using different percentiles of the weights, and use different score thresholds from the random draws.  The recursive usage is similar to the legacy implementation used in [Espinoza & Dupont et al. 2021](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1008857) (which is still provided as an executable).
@@ -217,6 +236,7 @@ rci = cy.ClairvoyanceRecursive(
     percentiles=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.925, 0.95, 0.975, 0.99],
     minimum_scores=[-np.inf, 0.382, 0.5],
     verbose=0,
+    remove_zero_weighted_features=False,
 )
 rci.fit(X_normalized, y, sort_hyperparameters_by=["C", "penalty"], ascending=[True, True])
 rci.plot_recursive_feature_selection()

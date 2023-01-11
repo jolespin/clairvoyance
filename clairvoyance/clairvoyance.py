@@ -2,7 +2,7 @@
 # Built-ins
 import os, sys, itertools, argparse, time, datetime, copy, warnings
 from collections import OrderedDict
-from multiprocessing import cpu_count
+# from multiprocessing import cpu_count
 
 # PyData
 import pandas as pd
@@ -50,12 +50,6 @@ from soothsayer_utils import (
 # ==============================================================================
 # Total sum scaling
 def closure(X:pd.DataFrame):
-    if np.any(X.values < 0):
-        raise ValueError("Cannot have negative proportions")
-    if X.ndim != 2:
-        raise ValueError("Input matrix must have two dimensions")
-    if np.all(X == 0, axis=1).sum() > 0:
-        raise ValueError("Input matrix cannot have rows with all zeros")
     sum_ = X.sum(axis=1)
     return (X.T/sum_).T
 
@@ -66,24 +60,48 @@ def clr(X:pd.DataFrame):
     geometric_mean = X_log.mean(axis=1)
     return (X_log - geometric_mean.values.reshape(-1,1))
 
-# Normalization
-def transform(X, method="closure", axis=1):
-    """
-    Assumes X_data.index = Samples, X_data.columns = features
-    axis = 0 = cols, axis = 1 = rows
-    e.g. axis=1, method=ratio: transform for relative abundance so each row sums to 1.
-    "tss" = closure/total-sum-scaling
-    "clr" = center log-ratio
-
-    """
+# Transformations
+def transform(X, method="closure", axis=1, multiplicative_replacement="auto", verbose=0, log=sys.stdout):
+#     """
+#     Assumes X_data.index = Samples, X_data.columns = features
+#     axis = 0 = cols, axis = 1 = rows
+#     e.g. axis=1, method=closure: transform for relative abundance so each row sums to 1.
+#     "closure" = closure/total-sum-scaling
+#     "clr" = center log-ratio
+#     None = No transformation
+#     """
     # Transpose for axis == 0
     if axis == 0:
         X = X.T
-    # Common
-    if method == "closure":
-        X_transformed = closure(X)
-    if method == "clr":
-        X_transformed = clr(X)
+
+    # Base output
+    X_transformed = X.copy()
+
+    # Checks
+    if X.ndim != 2:
+        raise ValueError("Input matrix must have two dimensions")
+    # if np.all(X == 0, axis=1).sum() > 0:
+    #     raise ValueError("Input matrix cannot have rows with all zeros")
+    # Transformed output
+    if method is not None:
+        if np.any(X.values < 0):
+            raise ValueError("Cannot have negative values")
+        if X.shape[1] > 1:
+            if method == "closure":
+                X_transformed = closure(X)
+            if method == "clr":
+                if multiplicative_replacement == "auto":
+                    if not np.all(X > 0):
+                        multiplicative_replacement = 1/X.shape[1]**2
+                    else:
+                        multiplicative_replacement = None
+                if multiplicative_replacement is None:
+                    multiplicative_replacement = 0
+                assert isinstance(multiplicative_replacement, (float,int,np.floating,np.integer))
+                X_transformed = clr(X + multiplicative_replacement)
+        else:
+            if verbose > 1:
+                print("Only 1 feature left.  Ignoring transformation.", file=log)
 
     # Transpose back
     if axis == 0:
@@ -269,8 +287,11 @@ def recursive_feature_inclusion(
     verbose=0,
     log=sys.stdout,
     progress_message="Recursive feature inclusion",
-    # remove_zero_weighted_features=True,
+    remove_zero_weighted_features=True,
+    maximum_tries_to_remove_zero_weighted_features=1000,
     ) -> pd.Series:
+
+
     
     assert len(set(X.columns)) == X.shape[1], "Cannot have duplicate feature names in `X`"
     if additional_feature_penalty is None:
@@ -297,13 +318,18 @@ def recursive_feature_inclusion(
     if isinstance(scorer, str):
         scorer = get_scorer(scorer)
 
-    no_progress = 0
-
-    best_score = target_score
+    # Best results
     history = OrderedDict()
-    feature_tuples = list()
+
     best_features = None
+    best_score = target_score
+
+    # Feature tracker
+    feature_tuples = list()
+    unique_feature_sets = list()
     
+    # Progress tracker
+    no_progress = 0
     if progress_message is None:
         iterable = range(initial_feature_weights.size)
     else:
@@ -315,47 +341,67 @@ def recursive_feature_inclusion(
         continue_algorithm = True
 
         # Transform features
-        if X_rfi.shape[1] > 1:
-            if transformation is not None:
-                if transformation == "clr":
-                    if multiplicative_replacement == "auto":
-                        multiplicative_replacement = 1/X_rfi.shape[1]**2
-                    else:
-                        multiplicative_replacement = 0
-                    X_rfi = X_rfi + multiplicative_replacement
-                X_rfi = transform(X_rfi, method=transformation, axis=1)
+        if X_rfi.shape[1] > 1: 
+            X_rfi = transform(X=X_rfi, method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
         else:
             if transformation is not None:
                 continue_algorithm = False
             if verbose > 2:
                 print("Only 1 feature left.  Ignoring transformation.", file=log)
         if continue_algorithm:
-            # if remove_zero_weighted_features:
-            #     estimator.fit(X=X_rfi, y=y)
+            # Remove zero-weighted features
+            if remove_zero_weighted_features:
+                for j in range(maximum_tries_to_remove_zero_weighted_features):
+                    X_query = X.loc[:,features]
 
-            feature_tuples.append(tuple(features))
+                    estimator.fit(
+                        X=transform(X=X_query, method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1), 
+                        y=y,
+                    )
+                    _W = getattr(estimator, feature_weight_attribute)
+                    _w = format_weights(_W)
+                    mask_zero_weight_features = format_weights(_W) != 0
+                    if np.all(mask_zero_weight_features):
+                        X_rfi = transform(X=X_query, method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
+                        if verbose > 1:
+                            if j > 0:
+                                print("[Success][Iteration={}, Try={}]: Removed all zero weighted features. The following features remain: {}".format(i, j, list(features)), file=log)
+                        break
+                    else:
+                        if verbose > 2:
+                            if j > 0:
+                                print("[...][Iteration={}, Try={}]: Removing {} features as they have zero weight in fitted model: {}".format(i, j, len(mask_zero_weight_features) - np.sum(mask_zero_weight_features), X_query.columns[~mask_zero_weight_features].tolist()), file=log)
+                        features = X_query.columns[mask_zero_weight_features].tolist()
 
-            scores = cross_val_score(estimator=estimator, X=X_rfi, y=y, cv=cv_splits, n_jobs=n_jobs, scoring=scorer)
-
-
-            average_score = np.mean(scores)
-            history[i] = scores #{"average_score":average_score, "sem":sem}
-            
-            # Add penalties to score target
-            penalty_adjusted_score_target = (best_score + minimum_improvement_in_score + additional_feature_penalty(len(features)))
-            
-            if average_score <= penalty_adjusted_score_target:
-                if verbose > 1:
-                    print("Current iteration {} of N={} features has not improved score: {} ≤ {}".format(i, len(features), average_score, best_score), file=log)
-                no_progress += 1
-            else:
+            feature_set = frozenset(features)
+            if feature_set  in unique_feature_sets:
                 if verbose > 0:
-                    print("Updating best score with N={} features : {} -> {}".format(len(features), best_score, average_score), file=log)
-                best_score = average_score
-                best_features = features
-                no_progress = 0
-            if no_progress >= early_stopping:
-                break
+                    print("Skipping iteration {} because removing zero-weighted features has produced a feature set that has already been evaluated: {}".format(i, set(feature_set)), file=log)
+            else:
+                feature_tuples.append(tuple(features))
+                unique_feature_sets.append(feature_set)
+
+                scores = cross_val_score(estimator=estimator, X=X_rfi, y=y, cv=cv_splits, n_jobs=n_jobs, scoring=scorer)
+
+
+                average_score = np.mean(scores)
+                history[i] = scores #{"average_score":average_score, "sem":sem}
+                
+                # Add penalties to score target
+                penalty_adjusted_score_target = (best_score + minimum_improvement_in_score + additional_feature_penalty(len(features)))
+                
+                if average_score <= penalty_adjusted_score_target:
+                    if verbose > 1:
+                        print("Current iteration {} of N={} features has not improved score: {} ≤ {}".format(i, len(features), average_score, best_score), file=log)
+                    no_progress += 1
+                else:
+                    if verbose > 0:
+                        print("Updating best score with N={} features : {} -> {}".format(len(features), best_score, average_score), file=log)
+                    best_score = average_score
+                    best_features = features
+                    no_progress = 0
+                if no_progress >= early_stopping:
+                    break
     if verbose > 0:
         if best_features is None:
             print("Terminating algorithm after {} iterations with a best score of {} as no feature set improved the score with current parameters".format(i+1, best_score), file=log)
@@ -366,7 +412,7 @@ def recursive_feature_inclusion(
 
     history = pd.DataFrame(history, index=list(map(lambda x: ("splits", x), cv_labels))).T
     history.index = feature_tuples
-    history.index.name = "feature_set"
+    history.index.name = "features"
     average_scores = history.mean(axis=1)
     sems = history.sem(axis=1)
     history.insert(loc=0, column=("summary", "number_of_features"),value = history.index.map(len))
@@ -382,9 +428,11 @@ def recursive_feature_inclusion(
     best_features = list(history.loc[history[("summary", "average_score")] == best_score, ("summary", "number_of_features")].sort_values(ascending=less_features_is_better).index[0])
     best_estimator_sem = history.loc[[tuple(best_features)],("summary","sem")].values[0]
     best_estimator_rci = clone(estimator)
+    X_best_features = transform(X=X.loc[:,best_features], method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
+
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=ConvergenceWarning)
-        best_estimator_rci.fit(X.loc[:,best_features], y)
+        best_estimator_rci.fit(X_best_features, y)
     
     # Score statement
     if verbose > 0:
@@ -405,7 +453,7 @@ def recursive_feature_inclusion(
     # Cross validation weights
     cv_weights = OrderedDict()
     for id_cv, (training_index, testing_index) in zip(cv_labels, cv_splits):
-        X_training = X.iloc[training_index].loc[:,best_features]
+        X_training = transform(X=X.iloc[training_index].loc[:,best_features], method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
         y_training = y.iloc[training_index]
         clf = clone(estimator)
         with warnings.catch_warnings():
@@ -434,7 +482,7 @@ def recursive_feature_inclusion(
 
 
 # Plotting
-def plot_scores(
+def plot_scores_line(
     average_scores:pd.Series, 
     sem:pd.Series, 
     horizontal_lines=True,
@@ -461,6 +509,7 @@ def plot_scores(
     yticklabel_kws=dict(),
     title_kws=dict(),
     legend_kws=dict(),
+    **kwargs,
     ):
     with plt.style.context(style):
         _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
@@ -474,7 +523,7 @@ def plot_scores(
         else:
             fig = plt.gcf()
         
-        average_scores.plot(ax=ax, color=linecolor, label="Average score")
+        average_scores.plot(ax=ax, color=linecolor, label="Average score", **kwargs)
         x_grid = np.arange(average_scores.size)
         ax.fill_between(x_grid, y1=average_scores-sem, y2=average_scores+sem, alpha=alpha, color=errorcolor, label="SEM")
         
@@ -489,9 +538,7 @@ def plot_scores(
             ax.axvline(v, color=linecolor, linestyle="--", linewidth=0.75, label="%d features (score = %0.3f)"%(v + 1, h))
             if horizontal_lines:
                 ax.plot([0,v], [h,h], color=linecolor, linestyle="--", linewidth=0.75)
-                
             
-        
         ax.set_xticks(x_grid)
         if xlim is None:
             xlim = (1,average_scores.size)
@@ -538,6 +585,7 @@ def plot_weights_bar(
     yticklabel_kws=dict(),
     title_kws=dict(),
     legend_kws=dict(),
+    **kwargs,
     ):
     with plt.style.context(style):
         _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
@@ -554,7 +602,7 @@ def plot_weights_bar(
         feature_weights = feature_weights.dropna()
         if ascending is not None:
             feature_weights = feature_weights.sort_values(ascending=ascending)
-        feature_weights.plot(ax=ax, color=color, label=ylabel, kind="bar")
+        feature_weights.plot(ax=ax, color=color, label=ylabel, kind="bar", **kwargs)
         ax.axhline(0, color="black", linewidth=0.618)
         
         if ylim:
@@ -603,6 +651,7 @@ def plot_weights_box(
     yticklabel_kws=dict(),
     title_kws=dict(),
     legend_kws=dict(),
+    **kwargs,
     ):
     with plt.style.context(style):
         _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
@@ -611,6 +660,8 @@ def plot_weights_box(
         _xticklabel_kws = {"fontsize":12, "rotation":xtick_rotation}; _xticklabel_kws.update(xticklabel_kws)
         _yticklabel_kws = {"fontsize":12}; _yticklabel_kws.update(yticklabel_kws)
         _legend_kws = {"fontsize":12}; _legend_kws.update(legend_kws)
+        _box_kws = dict( linewidth=1.0, boxprops={"facecolor": color}, medianprops={"color": linecolor})
+        _box_kws.update(kwargs)
         if ax is None:
             fig, ax = plt.subplots(figsize=figsize)
         else:
@@ -625,7 +676,8 @@ def plot_weights_box(
         # feature_weights.T.plot(ax=ax, color=color, label=ylabel, kind="box")
         
         data = pd.melt(feature_weights.T, var_name="Feature", value_name="W")
-        sns.boxplot(data=data, x="Feature", y="W", ax=ax,  linewidth=1.0, boxprops={"facecolor": color}, medianprops={"color": linecolor})
+
+        sns.boxplot(data=data, x="Feature", y="W", ax=ax, **_box_kws)
 
         if show_swarm:
             sns.swarmplot(data=data, x="Feature", y="W", ax=ax, color=swarmcolor, alpha=alpha)
@@ -680,6 +732,7 @@ def plot_recursive_feature_selection(
     yticklabel_kws=dict(),
     title_kws=dict(),
     legend_kws=dict(),
+    **kwargs,
     ):
     assert isinstance(number_of_features, pd.Series)
     assert isinstance(scores, pd.Series)
@@ -713,7 +766,7 @@ def plot_recursive_feature_selection(
 
         # if sem is not None:
         #     ax.errorbar(df["number_of_features"].values, df["scores"].values, yerr=df["sem"].values, alpha=0.1618, color=color)
-        ax.scatter(x=df["number_of_features"].values, y=df["scores"].values, edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color)
+        ax.scatter(x=df["number_of_features"].values, y=df["scores"].values, edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color, **kwargs)
         ax.set_xlabel(xlabel, fontsize=12)
         ax.set_ylabel(ylabel, fontsize=12)
 
@@ -750,6 +803,10 @@ class ClairvoyanceBase(object):
         transformation=None,
         multiplicative_replacement="auto",
 
+        # Zero weights
+        remove_zero_weighted_features=True,
+        maximum_tries_to_remove_zero_weighted_features=1000,
+
         # Labeling
         name=None,
         observation_type=None,
@@ -760,10 +817,10 @@ class ClairvoyanceBase(object):
         log=sys.stdout,
          ):         
 
-        # Tasks
-        if n_jobs == -1:
-            n_jobs = cpu_count()
-            assert n_jobs > 0
+        # # Tasks
+        # if n_jobs == -1:
+        #     n_jobs = cpu_count()
+        # assert n_jobs > 0
             
         # Method
         assert_acceptable_arguments(method, {"asymmetric", "symmetric"})
@@ -815,6 +872,8 @@ class ClairvoyanceBase(object):
             assert isinstance(multiplicative_replacement, (float, np.floating, int, np.integer)), "If `multiplicative_replacement` is not set to `auto` it must be float or int"
         self.multiplicative_replacement = multiplicative_replacement
 
+        self.remove_zero_weighted_features=remove_zero_weighted_features
+        self.maximum_tries_to_remove_zero_weighted_features=maximum_tries_to_remove_zero_weighted_features
 
         
     def __repr__(self):
@@ -845,6 +904,10 @@ class ClairvoyanceBase(object):
             pad*" " + "* Transformation: {}".format(self.transformation),
             pad*" " + "* Multiplicative Replacement: {}".format(self.multiplicative_replacement),
             
+            pad*" " + "- -- --- ----- -------- -------------",
+            pad*" " + "* Remove Zero Weighted Features: {}".format(self.remove_zero_weighted_features),
+            pad*" " + "* Maximum Tries to Remove: {}".format(self.maximum_tries_to_remove_zero_weighted_features),
+
             pad*" " + "- -- --- ----- -------- -------------",
 
             pad*" " + "* Fitted(Weights): {}".format(self.is_fitted_weights),
@@ -1053,19 +1116,7 @@ class ClairvoyanceBase(object):
         self.estimators_ = _get_estimators()
         self.number_of_estimators_ = len(self.estimators_)
 
-        X_query = self.X_ 
-        if X_query.shape[1] > 1:
-            if self.transformation is not None:
-                if self.transformation == "clr":
-                    if self.multiplicative_replacement == "auto":
-                        multiplicative_replacement = 1/X_query.shape[1]**2
-                    else:
-                        multiplicative_replacement = 0
-                    X_query = X_query + multiplicative_replacement
-                X_query = transform(X_query, method=self.transformation, axis=1)
-        else:
-            if self.verbose > 2:
-                print("Only 1 feature left.  Ignoring transformation.", file=self.log)
+        X_query = transform(X=self.X_, method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1, log=self.log, verbose=self.verbose)
 
         self.intermediate_weights_, self.intermediate_scores_ = _run(X=X_query, y=self.y_, stratify=self.stratify_, split_size=split_size, method=self.method, progress_message=progress_message)
         # Get best params
@@ -1083,7 +1134,7 @@ class ClairvoyanceBase(object):
             if self.verbose > 1:
                 print("Resetting fitted estimators", file=self.log)
             for params, estimator in self.estimators_.items():
-                if self.verbose > 2:
+                if self.verbose > 3:
                     print("[Resetting] {}".format(params), file=self.log)
                 self.estimators_[params] = clone(estimator)
             
@@ -1185,26 +1236,32 @@ class ClairvoyanceBase(object):
             cv_prefix=cv_prefix,
             verbose=self.verbose,
             progress_message=progress_message,
+            remove_zero_weighted_features=self.remove_zero_weighted_features,
+            maximum_tries_to_remove_zero_weighted_features=self.maximum_tries_to_remove_zero_weighted_features,
             )
         
         # Results
         self.history_ = rci_results["history"]
+        if self.remove_zero_weighted_features:
+            self.history_ = self.history_.sort_values([("summary", "average_score"), ("summary", "number_of_features")], ascending=[False, less_features_is_better])
         self.highest_score_ = rci_results["highest_score"]
         self.highest_scoring_features_ = rci_results["highest_scoring_features"]
         self.best_score_ = rci_results["best_score"]
         self.best_estimator_sem_ = rci_results["best_estimator_sem"]
         self.best_features_ = rci_results["best_features"]
         self.best_estimator_rci_ = clone(estimator)
-        with warnings.catch_warnings():
+
+        X_rci = transform(X=X.loc[:,self.best_features_], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
+        with warnings.catch_warnings(): #!
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
-            self.best_estimator_rci_.fit(X.loc[:,self.best_features_], y)
+            self.best_estimator_rci_.fit(X_rci, y)
         self.feature_weights_ =  rci_results["feature_weights"]
         self.rci_feature_weights_ = rci_results["feature_weights"][("full_dataset", "rci_weights")].loc[self.best_features_]
         self.cv_splits_ = rci_results["cv_splits"]
         self.cv_labels_ = rci_results["cv_labels"]
         
         if copy_X_rci:
-            self.X_rci_ = X.loc[:,self.best_features_]
+            self.X_rci_ = X_rci.copy()
             
         self.is_fitted_rci = True
         
@@ -1223,7 +1280,11 @@ class ClairvoyanceBase(object):
             vertical_lines = [len(self.best_features_)-1, len(self.highest_scoring_features_)-1]
         else:
             vertical_lines = [len(self.best_features_)-1]
-        return plot_scores(average_scores=self.history_[("summary", "average_score")], sem=self.history_[("summary", "sem")], vertical_lines=vertical_lines, **kwargs)
+
+        if self.remove_zero_weighted_features:
+            return plot_recursive_feature_selection(number_of_features=self.history_[("summary", "number_of_features")], scores=self.history_[("summary", "average_score")],  **kwargs)
+        else:
+            return plot_scores_line(average_scores=self.history_[("summary", "average_score")], sem=self.history_[("summary", "sem")], vertical_lines=vertical_lines, **kwargs)
         
     def plot_weights(
         self,
@@ -1243,13 +1304,13 @@ class ClairvoyanceBase(object):
     def copy(self):
         return copy.deepcopy(self)
     
-    def to_file(self, path:str):
-        write_object(self, path)  
+    # def to_file(self, path:str):
+    #     write_object(self, path)  
         
-    @classmethod
-    def from_file(cls, path:str):
-        cls = read_object(path)
-        return cls
+    # @classmethod
+    # def from_file(cls, path:str):
+    #     cls = read_object(path)
+    #     return cls
         
         
 class ClairvoyanceClassification(ClairvoyanceBase):
@@ -1265,16 +1326,21 @@ class ClairvoyanceClassification(ClairvoyanceBase):
         random_state=0,
         n_jobs=1,
 
+        # Transformations
+        transformation=None,
+        multiplicative_replacement="auto",
+
+        # Zero weights
+        remove_zero_weighted_features=True,
+        maximum_tries_to_remove_zero_weighted_features=1000,
+
         # Labeling
         name=None,
         observation_type=None,
         feature_type=None,
         target_type=None,
-
-        # Transformations
-        transformation=None,
-        multiplicative_replacement="auto",
         
+        # Log
         verbose=1,
         log=sys.stdout,
          ): 
@@ -1304,7 +1370,11 @@ class ClairvoyanceClassification(ClairvoyanceBase):
             transformation=transformation,
             multiplicative_replacement=multiplicative_replacement,
 
-            # Utility
+            # Zero weights
+            remove_zero_weighted_features=remove_zero_weighted_features,
+            maximum_tries_to_remove_zero_weighted_features=maximum_tries_to_remove_zero_weighted_features,
+
+            # Log
             verbose=verbose,
             log=log,
         )
@@ -1323,16 +1393,21 @@ class ClairvoyanceRegression(ClairvoyanceBase):
         random_state=0,
         n_jobs=1,
 
+        # Transformations
+        transformation=None,
+        multiplicative_replacement="auto",
+
+        # Zero weights
+        remove_zero_weighted_features=True,
+        maximum_tries_to_remove_zero_weighted_features=1000,
+
         # Labeling
         name=None,
         observation_type=None,
         feature_type=None,
         target_type=None,
-
-        # Transformations
-        transformation=None,
-        multiplicative_replacement="auto",
         
+        # Log
         verbose=1,
         log=sys.stdout,
 
@@ -1358,10 +1433,16 @@ class ClairvoyanceRegression(ClairvoyanceBase):
             # Transformation
             transformation=transformation,
             multiplicative_replacement=multiplicative_replacement,
-            
+
+            # Zero weights
+            remove_zero_weighted_features=remove_zero_weighted_features,
+            maximum_tries_to_remove_zero_weighted_features=maximum_tries_to_remove_zero_weighted_features,
+
             # Utility
             verbose=verbose,
             log=log,
+
+        
         )
 
 class ClairvoyanceRecursive(object):
@@ -1390,6 +1471,10 @@ class ClairvoyanceRecursive(object):
         transformation=None,
         multiplicative_replacement="auto",
         
+        # Zero weights
+        remove_zero_weighted_features=True,
+        maximum_tries_to_remove_zero_weighted_features=1000,
+
         # Labeling
         name=None,
         observation_type=None,
@@ -1399,10 +1484,10 @@ class ClairvoyanceRecursive(object):
         verbose=1,
         log=sys.stdout,
          ): 
-        # Tasks
-        if n_jobs == -1:
-            n_jobs = cpu_count()
-            assert n_jobs > 0
+        # # Tasks
+        # if n_jobs == -1:
+        #     n_jobs = cpu_count()
+        #     assert n_jobs > 0
             
         # Method
         assert_acceptable_arguments(method, {"asymmetric", "symmetric"})
@@ -1454,7 +1539,7 @@ class ClairvoyanceRecursive(object):
             scorer = get_scorer(scorer)
         self.scorer = scorer
         self.scorer_name = scorer._score_func.__name__
-        if isinstance(percentiles, (float, np.floating, int)):
+        if isinstance(percentiles, (float, np.floating, int, np.integer)):
             percentiles = [percentiles]
         assert all(map(lambda x: 0.0 <= x < 1.0, percentiles)), "All percentiles must be 0.0 ≤ x < 1.0"
         percentiles = sorted(map(float, percentiles))
@@ -1474,7 +1559,9 @@ class ClairvoyanceRecursive(object):
         self.additional_feature_penalty = additional_feature_penalty
         self.verbose = verbose
         self.log = log
-        
+        self.remove_zero_weighted_features = remove_zero_weighted_features
+        self.maximum_tries_to_remove_zero_weighted_features = maximum_tries_to_remove_zero_weighted_features
+
     def __repr__(self):
         pad = 4
         header = format_header("{}(Name:{})".format(self.__class__.__name__, self.name),line_character="=")
@@ -1506,7 +1593,11 @@ class ClairvoyanceRecursive(object):
             pad*" " + "* Target Type: {}".format(self.target_type),
             pad*" " + "* Transformation: {}".format(self.transformation),
             pad*" " + "* Multiplicative Replacement: {}".format(self.multiplicative_replacement),
-            
+
+            pad*" " + "- -- --- ----- -------- -------------",
+            pad*" " + "* Remove Zero Weighted Features: {}".format(self.remove_zero_weighted_features),
+            pad*" " + "* Maximum Tries to Remove: {}".format(self.maximum_tries_to_remove_zero_weighted_features),
+        
             
             pad*" " + "- -- --- ----- -------- -------------",
             pad*" " + "* Fitted(RCI): {}".format(self.is_fitted_rci),
@@ -1529,7 +1620,6 @@ class ClairvoyanceRecursive(object):
         ascending:list=None,
         less_features_is_better=True,
         remove_redundancy=True,
-        exclude_zero_weighted_features=False,
         ):
 
         assert np.all(X.index == y.index), "X.index and y.index must have the same ordering"
@@ -1559,24 +1649,6 @@ class ClairvoyanceRecursive(object):
                     if self.verbose > 2:
                         print("Feature set for percentile={}:".format(pctl), current_features_for_percentile.tolist(), sep="\n", file=self.log)
 
-                    # Get current feature set
-                    X_query = self.X_initial_.loc[:,current_features_for_percentile]
-                        
-                    # Transform features
-                    if X_query.shape[1] > 1:
-                        if self.transformation is not None:
-                            multiplicative_replacement = self.multiplicative_replacement
-                            if self.transformation == "clr":
-                                if self.multiplicative_replacement == "auto":
-                                    multiplicative_replacement = 1/X_query.shape[1]**2
-                                else:
-                                    multiplicative_replacement = 0
-                                X_query = X_query + multiplicative_replacement
-                            X_query = transform(X_query, method=self.transformation, axis=1)
-                    else:
-                        if self.verbose > 2:
-                            print("Only 1 feature left.  Ignoring transformation.", file=self.log)
-
 
                     # Initiate model
                     model = self.clairvoyance_class(
@@ -1596,6 +1668,8 @@ class ClairvoyanceRecursive(object):
                         log=self.log,
                         transformation=self.transformation,
                         multiplicative_replacement=self.multiplicative_replacement,
+                        remove_zero_weighted_features=self.remove_zero_weighted_features,
+                        maximum_tries_to_remove_zero_weighted_features=self.maximum_tries_to_remove_zero_weighted_features,
                     )
 
                     # Fit model
@@ -1607,7 +1681,7 @@ class ClairvoyanceRecursive(object):
                     reset_fitted_estimators=False, 
                     sort_hyperparameters_by=sort_hyperparameters_by, 
                     ascending=ascending, 
-                    progress_message="Permuting samples and fitting models [percentile={}, number_of_features={}]".format(pctl, X_query.shape[1]),
+                    progress_message="Permuting samples and fitting models [percentile={}, number_of_features={}]".format(pctl, len(current_features_for_percentile)),
                     )
 
                     # Check for redundant minimum score thresholds
@@ -1629,6 +1703,7 @@ class ClairvoyanceRecursive(object):
                     best_hyperparameters_for_percentile = None
                     best_minimum_score_for_percentile = None
 
+                    X_query = transform(X=self.X_initial_.loc[:,current_features_for_percentile], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
                     for params, estimator in model.estimators_.items():      
 
                         # Baseline
@@ -1668,9 +1743,9 @@ class ClairvoyanceRecursive(object):
                                     target_score=-np.inf, 
                                     less_features_is_better=less_features_is_better, 
                                     progress_message=progress_message,
-
                                 )
 
+                                #!
                                 # Update weights if applicable
                                 if model.best_score_ > best_score_for_percentile:
                                     best_score_for_percentile = model.best_score_
@@ -1700,7 +1775,7 @@ class ClairvoyanceRecursive(object):
 
                     # Get new features
                     if i < len(self.percentiles) - 1:
-                        if exclude_zero_weighted_features:
+                        if self.remove_zero_weighted_features: #! Used to be exclude_zero_weighted_features which had a separate functionality from removing zero weighted features in the models.  Keep eye on this
                             nonzero_weights = best_clairvoyance_feature_weights_for_percentile[lambda x: x > 0]
                             current_features_for_percentile = best_clairvoyance_feature_weights_for_percentile[lambda w: w >= np.percentile(nonzero_weights, q=100*self.percentiles[i+1])].sort_values(ascending=False).index
                         else:
@@ -1761,10 +1836,134 @@ class ClairvoyanceRecursive(object):
 
         return plot_recursive_feature_selection(number_of_features=number_of_features, scores=scores,  **kwargs)
 
-    # def to_file(self, path:str):
-    #     write_object(self, path)  
+    def to_file(self, path:str):
+        write_object(self, path)  
         
-    # @classmethod
-    # def from_file(cls, path:str):
-    #     cls = read_object(path)
-    #     return cls
+    @classmethod
+    def from_file(cls, path:str):
+        cls = read_object(path)
+        return cls
+
+def main():
+    s = """
+_______        _______ _____  ______ _    _  _____  __   __ _______ __   _ _______ _______
+|       |      |_____|   |   |_____/  \  /  |     |   \_/   |_____| | \  | |       |______
+|_____  |_____ |     | __|__ |    \_   \/   |_____|    |    |     | |  \_| |_____  |______
+    """
+    print(s, file=sys.stderr)
+    print("Hello There.\nI live here: https://github.com/jolespin/clairvoyance", file=sys.stderr)
+    if len(sys.argv) > 0:
+        if sys.argv[1] == "test":
+            # Classification
+            print("\nRunning test for `ClairvoyanceClassification`", file=sys.stderr)
+            import numpy as np
+            import pandas as pd
+            from sklearn.datasets import load_iris
+            from sklearn.linear_model import LogisticRegression
+
+            # Load iris dataset
+            X, y = load_iris(return_X_y=True, as_frame=True)
+            X.columns = X.columns.map(lambda j: j.split(" (cm")[0].replace(" ","_"))
+
+            # Relabel targets
+            target_names = load_iris().target_names
+            y = y.map(lambda i: target_names[i])
+
+            # Add 996 noise features (total = 1000 features) in the same range of values as the original features
+            number_of_noise_features = 996
+            vmin = X.values.ravel().min()
+            vmax = X.values.ravel().max()
+            X_noise = pd.DataFrame(
+                data=np.random.RandomState(0).randint(low=int(vmin*10), high=int(vmax*10), size=(150, number_of_noise_features))/10,
+                columns=map(lambda j:"noise_{}".format(j+1), range(number_of_noise_features)),
+            )
+
+            X_iris_with_noise = pd.concat([X, X_noise], axis=1)
+            X_normalized = X_iris_with_noise - X_iris_with_noise.mean(axis=0).values
+            X_normalized = X_normalized/X_normalized.std(axis=0).values
+
+            # Specify model algorithm and parameter grid
+            estimator=LogisticRegression(max_iter=1000, solver="liblinear", multi_class="ovr")
+            param_grid={
+                "C":[1e-10] + (np.arange(1,11)/10).tolist(),
+                "penalty":["l1", "l2"],
+            }
+
+            # Instantiate model
+            clf = ClairvoyanceClassification(
+                n_jobs=-1, 
+                scorer="accuracy", 
+                n_draws=10, 
+                estimator=estimator, 
+                param_grid=param_grid, 
+                verbose=1,
+            )
+            clf.fit(X_normalized, y)#, sort_hyperparameters_by=["C", "penalty"], ascending=[True, False])
+            history = clf.recursive_feature_inclusion(early_stopping=10)
+            print(history.head(), file=sys.stdout)
+
+            # Regression
+            print("\nRunning test for `ClairvoyanceRegression`", file=sys.stderr)
+            from sklearn.datasets import load_boston
+            from sklearn.tree import DecisionTreeRegressor
+            from sklearn.model_selection import train_test_split
+
+            # Load Boston data
+            boston = load_boston()
+            X = pd.DataFrame(boston.data, columns=boston.feature_names)
+            y = pd.Series(boston.target)
+
+            number_of_noise_features = 100 - X.shape[1]
+            X_noise = pd.DataFrame(np.random.RandomState(0).normal(size=(X.shape[0], number_of_noise_features)),  columns=map(lambda j: f"noise_{j}", range(number_of_noise_features)))
+            X_boston_with_noise = pd.concat([X, X_noise], axis=1)
+            X_normalized = X_boston_with_noise - X_boston_with_noise.mean(axis=0).values
+            X_normalized = X_normalized/X_normalized.std(axis=0).values
+
+            # Let's fit the model but leave a held out validation set
+            X_training, X_validation, y_training, y_validation = train_test_split(X_normalized, y, random_state=0, test_size=0.1618)
+
+            # Get parameters
+            estimator = DecisionTreeRegressor(random_state=0)
+            param_grid = {"min_samples_leaf":[1,2,3,5,8],"min_samples_split":{ 0.1618, 0.382, 0.5, 0.618}}
+
+            # Fit model
+            reg = ClairvoyanceRegression(name="Boston", n_jobs=-1, n_draws=10, estimator=estimator, param_grid=param_grid, verbose=1)
+            reg.fit(X_training, y_training)
+            history = reg.recursive_feature_inclusion(early_stopping=10, X=X_validation, y=y_validation)
+            print(history.head(), file=sys.stdout)
+
+            # Recursive
+            print("\nRunning test for `ClairvoyanceRecursive`", file=sys.stderr)
+            from sklearn.tree import DecisionTreeClassifier
+
+            X_normalized = X_iris_with_noise - X_iris_with_noise.mean(axis=0).values
+            X_normalized = X_normalized/X_normalized.std(axis=0).values
+            target_names = load_iris().target_names
+            y = pd.Series(load_iris().target)
+            y = y.map(lambda i: target_names[i])
+
+            # Specify model algorithm and parameter grid
+            estimator=DecisionTreeClassifier()
+            param_grid={
+                "criterion":["gini","entropy"],
+                "max_features":["log2", "sqrt", None, 0.382, 0.618],
+                "min_samples_leaf":[1,2,3,5,8, 13],
+            }
+
+            # Instantiate model
+            rci = ClairvoyanceRecursive(
+                n_jobs=-1, 
+                scorer="accuracy", 
+                n_draws=10, 
+                estimator=estimator, 
+                param_grid=param_grid, 
+                percentiles=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.925, 0.95, 0.975, 0.99],
+                minimum_scores=[-np.inf, 0.382, 0.5],
+                verbose=0,
+            )
+            rci.fit(X_normalized, y)
+            print(rci.results_.head(), file=sys.stdout)
+        else:
+            print("Unrecognized command.  Available commands {test}", file=sys.stderr)
+if __name__ == "__main__":
+    main()
