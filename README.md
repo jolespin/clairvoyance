@@ -12,7 +12,7 @@ Reimplementation for `Clairvoyance` from [Espinoza & Dupont et al. 2021](https:/
 #### Details:
 `import clairvoyance as cy`
 
-`__version__ = "2022.01.03"`
+`__version__ = "2022.1.3"`
 
 #### Installation
 
@@ -28,6 +28,20 @@ pip install git+https://github.com/jolespin/clairvoyance
 #### Citation
 
 Espinoza JL, Dupont CL, O’Rourke A, Beyhan S, Morales P, Spoering A, et al. (2021) Predicting antimicrobial mechanism-of-action from transcriptomes: A generalizable explainable artificial intelligence approach. PLoS Comput Biol 17(3): e1008857. https://doi.org/10.1371/journal.pcbi.1008857
+
+#### Development
+*Clairvoyance* is current in active development and undergoing a complete reimplementation from the ground up from the original publication.  The following includes a list of new features: 
+
+*  Supports any linear or tree-based `Scikit-Learn` compatible model
+*  Supports any `Scikit-Learn` compatible performance metric
+*  Supports regression (in addition to classification as in original implementation)
+*  Properly implements transformations for compositional data (e.g., CLR and closure) based on the query features for each iteration
+*  Added option to remove zero weighted features and redundant feature sets
+*  Added asymmetric mode in addition to the symmetric mode from the original implementation
+*  Added informative publication-ready plots
+*  Outputs multiple combinations of hyperparameters and scores for each feature combination
+*  Option to use validation sets or alternative models for recursive feature inclusion
+
 
 #### Usage
 
