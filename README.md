@@ -30,7 +30,7 @@ pip install git+https://github.com/jolespin/clairvoyance
 Espinoza JL, Dupont CL, O’Rourke A, Beyhan S, Morales P, Spoering A, et al. (2021) Predicting antimicrobial mechanism-of-action from transcriptomes: A generalizable explainable artificial intelligence approach. PLoS Comput Biol 17(3): e1008857. https://doi.org/10.1371/journal.pcbi.1008857
 
 #### Development
-*Clairvoyance* is current in active development and undergoing a complete reimplementation from the ground up from the original publication.  The following includes a list of new features: 
+*Clairvoyance* is currently under active development and undergoing a complete reimplementation from the ground up from the original publication.  The following includes a list of new features: 
 
 *  Supports any linear or tree-based `Scikit-Learn` compatible model
 *  Supports any `Scikit-Learn` compatible performance metric
