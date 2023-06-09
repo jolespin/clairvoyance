@@ -26,7 +26,7 @@
 # =======
 # Version
 # =======
-__version__= "2023.1.3"
+__version__= "2023.6.9"
 __author__ = "Josh L. Espinoza"
 __email__ = "jespinoz@jcvi.org, jol.espinoz@gmail.com"
 __url__ = "https://github.com/jolespin/clairvoyance"
@@ -39,10 +39,12 @@ functions = {
   "format_weights",
   "format_cross_validation",
   "get_feature_importance_attribute",
+  "get_balanced_class_subset",
   "recursive_feature_inclusion",
   "plot_scores_line","plot_weights_bar",
   "plot_weights_box",
   "plot_recursive_feature_selection",
+  "plot_scores_comparison",
 }
 classes = {
   "ClairvoyanceBase","ClairvoyanceClassification","ClairvoyanceRegression","ClairvoyanceRecursive",
