@@ -101,14 +101,14 @@ history = clf.recursive_feature_inclusion(early_stopping=10)
 history.head()
 
 ```
-![](images/1.png)
+![](images/1a.png)
 
 ```python
 clf.plot_scores(title="Iris", xtick_rotation=90)
 clf.plot_weights()
 clf.plot_weights(weight_type="cross_validation")
 ```
-![](images/2.png)
+![](images/2a.png)
 
 There are still a few noise variables, though with much lower weight, suggesting our classifier is modeling noise.  We can add an additional penalty where a change in score must exceed a threshold to add a new feature during the recursive feature inclusion algorithm.  We are keeping `    remove_zero_weighted_features=False` for this example.
 
@@ -118,7 +118,7 @@ clf.plot_scores(title="Iris", xtick_rotation=90)
 clf.plot_weights()
 clf.plot_weights(weight_type="cross_validation")
 ```
-![](images/3.png)
+![](images/3a.png)
 
 Now let's do a binary classification but optimize `fbeta` score instead of `accuracy`.  Instead of a fixed penalty, we are going to use a custom penalty that scales with the number of features included. 
 
@@ -149,14 +149,14 @@ clf_binary.fit(X_normalized, y, sort_hyperparameters_by=["C", "penalty"], ascend
 history = clf_binary.recursive_feature_inclusion(early_stopping=10, additional_feature_penalty=lambda n: 1e-3*n**2)
 history.head()
 ```
-![](images/4.png)
+![](images/4a.png)
 
 ```python
 clf_binary.plot_scores(title="Iris (Binary)", xtick_rotation=90)
 clf_binary.plot_weights()
 clf_binary.plot_weights(weight_type="cross_validation")
 ```
-![](images/5.png)
+![](images/5a.png)
 
 ##### Feature selection based on regression tasks
 Here's a basic regression using a `DecisionTreeRegressor` model and a grid search for different `min_samples_leaf` and `min_samples_split` parameters. We add 87 noise variables and normalize all of the features so their scale is standardized.  In this case, we are optimizing for `neg_root_mean_squared_error`.  We are using a validation set of ~16% of the data during our recursive feature inclusion. For decision trees, we have the issue of getting zero-weighted features which are uninformative and misleading for RCI.  To get around this, we implement a recursive feature removal that only keeps non-zero weighted features.  We can turn this on via `remove_zero_weighted_features=True`.  This also ensures that there are no redundant feature sets (not an issue when `remove_zero_weighted_features=False` because they are recursively added).  
@@ -203,14 +203,14 @@ reg.fit(X_training, y_training)
 history = reg.recursive_feature_inclusion(early_stopping=10, X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing)
 history.head()
 ```
-![](images/6.png)
+![](images/6a.png)
 
 ```python
 reg.plot_scores(title="Boston", xtick_rotation=90)
 reg.plot_weights()
 reg.plot_weights(weight_type="cross_validation")
 ```
-![](images/7.png)
+![](images/7a.png)
 
 Let's see if we can increase the performance using the weights fitted with a `DecisionTreeRegressor` but with an ensemble `GradientBoostingRegressor` for the actual feature inclusion algorithm. 
 
@@ -228,7 +228,7 @@ reg.plot_weights(weight_type="cross_validation")
 
 
 ```
-![](images/8.png)
+![](images/8a.png)
 
 RMSE is looking better.
 
@@ -268,7 +268,7 @@ rci.fit(X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing, so
 rci.plot_recursive_feature_selection()
 
 ```
-![](images/9.png)
+![](images/9a.png)
 
 ```python
 # Plot score comparisons
@@ -278,6 +278,6 @@ rci.get_history().head()
 
 Let's see which feature sets have the highest validation score (i.e., average cross-validation score) and highest testing score (not used during RCI) while also considering the number of features.
 
-![](images/10.png)
+![](images/10a.png)
 
 Looks like there are several hyperparameter sets that can predict at > 92% accuracy on the cross-validation and > 95% accuracy on the testing set using just the `petal_length` and `petal_width`.  This was able to filter out both the 96 noise features and the 2 non-informative real features.
