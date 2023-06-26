@@ -12,7 +12,7 @@ Reimplementation for `Clairvoyance` from [Espinoza & Dupont et al. 2021](https:/
 #### Details:
 `import clairvoyance as cy`
 
-`__version__ = "2023.6.9"`
+`__version__ = "2023.6.26"`
 
 #### Installation
 
@@ -40,7 +40,7 @@ Espinoza JL, Dupont CL, O’Rourke A, Beyhan S, Morales P, Spoering A, et al. (2
 *  Added asymmetric mode in addition to the symmetric mode from the original implementation
 *  Added informative publication-ready plots
 *  Outputs multiple combinations of hyperparameters and scores for each feature combination
-*  Option to use validation sets or alternative models for recursive feature inclusion
+*  Option to use testing sets or alternative models for recursive feature inclusion
 
 
 #### Usage
@@ -164,14 +164,17 @@ Here's a basic regression using a `DecisionTreeRegressor` model and a grid searc
 Note: When we use `remove_zero_weighted_features=True`, we get a scatter plot instead of a line plot with error because there are multiple feature sets (each with their own performance distribution on the CV set) that may have the same number of features.
 
 ```python
-from sklearn.datasets import load_boston
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.model_selection import train_test_split
 
 # Load Boston data
-boston = load_boston()
-X = pd.DataFrame(boston.data, columns=boston.feature_names)
-y = pd.Series(boston.target)
+# from sklearn.datasets import load_boston; boston = load_boston() # Deprecated
+data_url = "http://lib.stat.cmu.edu/datasets/boston"
+raw_df = pd.read_csv(data_url, sep="\s+", skiprows=22, header=None)
+data = np.hstack([raw_df.values[::2, :], raw_df.values[1::2, :2]])
+target = raw_df.values[1::2, 2]
+X = pd.DataFrame(data, columns=['CRIM', 'ZN', 'INDUS', 'CHAS', 'NOX', 'RM', 'AGE', 'DIS', 'RAD', 'TAX', 'PTRATIO', 'B', 'LSTAT'])
+y = pd.Series(target)
 
 number_of_noise_features = 100 - X.shape[1]
 X_noise = pd.DataFrame(np.random.RandomState(0).normal(size=(X.shape[0], number_of_noise_features)),  columns=map(lambda j: f"noise_{j}", range(number_of_noise_features)))
@@ -179,8 +182,8 @@ X_boston_with_noise = pd.concat([X, X_noise], axis=1)
 X_normalized = X_boston_with_noise - X_boston_with_noise.mean(axis=0).values
 X_normalized = X_normalized/X_normalized.std(axis=0).values
 
-# Let's fit the model but leave a held out validation set
-X_training, X_validation, y_training, y_validation = train_test_split(X_normalized, y, random_state=0, test_size=0.1618)
+# Let's fit the model but leave a held out testing set
+X_training, X_testing, y_training, y_testing = train_test_split(X_normalized, y, random_state=0, test_size=0.3)
 
 # Get parameters
 estimator = DecisionTreeRegressor(random_state=0)
@@ -197,7 +200,7 @@ reg = cy.ClairvoyanceRegression(
 	remove_zero_weighted_features=True,
 )
 reg.fit(X_training, y_training)
-history = reg.recursive_feature_inclusion(early_stopping=10, X=X_validation, y=y_validation)
+history = reg.recursive_feature_inclusion(early_stopping=10, X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing)
 history.head()
 ```
 ![](images/6.png)
@@ -209,24 +212,31 @@ reg.plot_weights(weight_type="cross_validation")
 ```
 ![](images/7.png)
 
-There's some noise features that make it through using `DecisionTreeRegressor` models.  Instead of adding a penalty, let's use the weights fitted with a `DecisionTreeRegressor` but use an ensemble `RandomForestRegressor` for the actual feature inclusion algorithm. 
+Let's see if we can increase the performance using the weights fitted with a `DecisionTreeRegressor` but with an ensemble `GradientBoostingRegressor` for the actual feature inclusion algorithm. 
 
 ```python
-from sklearn.ensemble import RandomForestRegressor
-history = reg.recursive_feature_inclusion(early_stopping=10, estimator=RandomForestRegressor(random_state=0), X=X_validation, y=y_validation)
+from sklearn.ensemble import GradientBoostingRegressor
+# Get the relevant parameters from the DecisionTreeRegressor that will be be applicable to the ensemble
+relevant_params_from_best_decisiontree_estimator = {k:reg.best_estimator_.get_params()[k] for k in ["criterion", "min_samples_split"]}
+# Get estimator
+estimator = GradientBoostingRegressor(random_state=0, **relevant_params_from_best_decisiontree_estimator)
+# Recursive feature inclusion using ensemble 
+history = reg.recursive_feature_inclusion(early_stopping=10, estimator=estimator, X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing)
 reg.plot_scores(title="Boston", xtick_rotation=90)
 reg.plot_weights()
 reg.plot_weights(weight_type="cross_validation")
+
+
 ```
 ![](images/8.png)
 
-That's much better...
+RMSE is looking better.
 
 ##### Recursive feature selection based on classification tasks
 Here we are running `Clairvoyance` recursively identifying several feature sets that work with different hyperparameters to get a range of feature sets to select from in the end.  We will iterate through all of the hyperparamater configurations, recursively feed in the data using different percentiles of the weights, and use different score thresholds from the random draws.  The recursive usage is similar to the legacy implementation used in [Espinoza & Dupont et al. 2021](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1008857) (which is still provided as an executable).
 
 ```python
-# Get the iris data again
+# Get the iris data (again)
 X_normalized = X_iris_with_noise - X_iris_with_noise.mean(axis=0).values
 X_normalized = X_normalized/X_normalized.std(axis=0).values
 target_names = load_iris().target_names
@@ -241,6 +251,8 @@ param_grid={
 }
 
 # Instantiate model
+X_training, X_testing, y_training, y_testing = train_test_split(X_normalized, y, random_state=0, test_size=0.3)
+
 rci = cy.ClairvoyanceRecursive(
     n_jobs=-1, 
     scorer="accuracy", 
@@ -252,22 +264,20 @@ rci = cy.ClairvoyanceRecursive(
     verbose=0,
     remove_zero_weighted_features=False,
 )
-rci.fit(X_normalized, y, sort_hyperparameters_by=["C", "penalty"], ascending=[True, True])
+rci.fit(X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing, sort_hyperparameters_by=["C", "penalty"], ascending=[True, True])
 rci.plot_recursive_feature_selection()
 
 ```
-
-We observe a nice separate around 10 features, so let's use that as a maximum. 
-
 ![](images/9.png)
 
 ```python
-# Plot the features with a maximum of 10
-rci.plot_recursive_feature_selection(max_features=10)
-
-# Filter out all the results that have more than 10 features
-rci.results_.query("number_of_features <= 10").sort_values("score", ascending=False).head()
+# Plot score comparisons
+rci.plot_scores_comparison()
+rci.get_history().head()
 ```
+
+Let's see which feature sets have the highest validation score (i.e., average cross-validation score) and highest testing score (not used during RCI) while also considering the number of features.
 
 ![](images/10.png)
 
+Looks like there are several hyperparameter sets that can predict at > 92% accuracy on the cross-validation and > 95% accuracy on the testing set using just the `petal_length` and `petal_width`.  This was able to filter out both the 96 noise features and the 2 non-informative real features.

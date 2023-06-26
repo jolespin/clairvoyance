@@ -19,8 +19,6 @@ import seaborn as sns
 from scipy import stats
 from sklearn.metrics import get_scorer, make_scorer
 from sklearn.model_selection import cross_val_score, train_test_split, RepeatedStratifiedKFold, StratifiedKFold, RepeatedKFold, KFold
-from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
 from sklearn.base import clone, is_classifier, is_regressor
 from sklearn.exceptions import ConvergenceWarning, UndefinedMetricWarning
 
@@ -283,6 +281,7 @@ def get_balanced_class_subset(y:pd.Series, size:float=0.1, random_state=None):
         subset = np.random.RandomState(random_state).choice(class_samples, size=subset_size_per_class, replace=False)
         index += subset.tolist()
     return index
+
 def recursive_feature_inclusion(
     estimator, 
     X:pd.DataFrame, 
@@ -312,35 +311,35 @@ def recursive_feature_inclusion(
     progress_message="Recursive feature inclusion",
     remove_zero_weighted_features=True,
     maximum_tries_to_remove_zero_weighted_features=1000,
-    X_validation:pd.DataFrame=None,
-    y_validation:pd.Series=None,
-    # optimize_validation_score = "auto",
+    X_testing:pd.DataFrame=None,
+    y_testing:pd.Series=None,
+    # optimize_testing_score = "auto",
     ) -> pd.Series:
 
     assert len(set(X.columns)) == X.shape[1], "Cannot have duplicate feature names in `X`"
     if additional_feature_penalty is None:
         additional_feature_penalty = lambda number_of_features: 0.0
 
-    # Validation
-    X_validation_is_provided = X_validation is not None
-    y_validation_is_provided = y_validation is not None
+    # Testing
+    X_testing_is_provided = X_testing is not None
+    y_testing_is_provided = y_testing is not None
 
-    if X_validation_is_provided is not None:
-        assert y_validation_is_provided is not None, "If `X_validation` is provided then `y_validation` must be provided"
+    if X_testing_is_provided is not None:
+        assert y_testing_is_provided is not None, "If `X_testing` is provided then `y_testing` must be provided"
 
-    if y_validation_is_provided is not None:
-        assert X_validation_is_provided is not None, "If `y_validation` is provided then `X_validation` must be provided"
+    if y_testing_is_provided is not None:
+        assert X_testing_is_provided is not None, "If `y_testing` is provided then `X_testing` must be provided"
 
-    validation_set_provided = False
-    if all([X_validation_is_provided, y_validation_is_provided]):
-        assert np.all(X_validation.index == y_validation.index), "X_validation.index and y_validation.index must have the same ordering"
-        assert np.all(X_validation.columns == X.columns), "X_validation.columns and X.columns must have the same ordering"
-        validation_set_provided = True
-    # if optimize_validation_score == "auto":
-    #     if validation_set_provided:
-    #         optimize_validation_score = True
+    testing_set_provided = False
+    if all([X_testing_is_provided, y_testing_is_provided]):
+        assert np.all(X_testing.index == y_testing.index), "X_testing.index and y_testing.index must have the same ordering"
+        assert np.all(X_testing.columns == X.columns), "X_testing.columns and X.columns must have the same ordering"
+        testing_set_provided = True
+    # if optimize_testing_score == "auto":
+    #     if testing_set_provided:
+    #         optimize_testing_score = True
     #     else:
-    #         optimize_validation_score = False
+    #         optimize_testing_score = False
 
     # Transformations
     assert_acceptable_arguments(transformation, {None,"clr","closure"})
@@ -374,7 +373,7 @@ def recursive_feature_inclusion(
 
     # Best results
     history = OrderedDict()
-    validation_scores = OrderedDict()
+    testing_scores = OrderedDict()
 
     best_features = None
     best_score = target_score
@@ -448,21 +447,21 @@ def recursive_feature_inclusion(
                 history[i] = scores #{"average_score":average_score, "sem":sem}
 
                 #! ---
-                # Validation Score
+                # Testing Score
                 query_score = average_score
-                validation_score = np.nan
-                if validation_set_provided:
+                testing_score = np.nan
+                if testing_set_provided:
                     estimator.fit(
                         X=X_rfi, 
                         y=y,
                     )
                     
                     # Transform features (if transformation = None, then there is no transformation)
-                    X_validation_rfi = transform(X=X_validation.loc[:,features], method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
-                    validation_score = scorer(estimator=estimator, X=X_validation_rfi, y_true=y_validation)
-                    validation_scores[i] = validation_score
-                    # if optimize_validation_score:
-                    #     query_score = validation_score
+                    X_testing_rfi = transform(X=X_testing.loc[:,features], method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
+                    testing_score = scorer(estimator=estimator, X=X_testing_rfi, y_true=y_testing)
+                    testing_scores[i] = testing_score
+                    # if optimize_testing_score:
+                    #     query_score = testing_score
                 #! ---
 
                 # Add penalties to score target
@@ -470,17 +469,17 @@ def recursive_feature_inclusion(
                 
                 if query_score <= penalty_adjusted_score_target:
                     if verbose > 1:
-                        # if optimize_validation_score:
-                        #     print("Current iteration {} of N={} features has not improved score: Validation Score[{} ≤ {}]".format(i, len(features), validation_score, best_score), file=log)
+                        # if optimize_testing_score:
+                        #     print("Current iteration {} of N={} features has not improved score: Testing Score[{} ≤ {}]".format(i, len(features), testing_score, best_score), file=log)
                         # else:
                         print("Current iteration {} of N={} features has not improved score: Average Score[{} ≤ {}]".format(i, len(features), average_score, best_score), file=log)
 
                     no_progress += 1
                 else:
-                    # if optimize_validation_score:
+                    # if optimize_testing_score:
                     #     if verbose > 0:
-                    #         print("Updating best score with N={} features : Validation Score[{} -> {}]".format(len(features), best_score, validation_score), file=log)
-                    #     best_score = validation_score
+                    #         print("Updating best score with N={} features : Testing Score[{} -> {}]".format(len(features), best_score, testing_score), file=log)
+                    #     best_score = testing_score
                     # else:
                     if verbose > 0:
                         print("Updating best score with N={} features : Average Score[{} -> {}]".format(len(features), best_score, average_score), file=log)
@@ -500,33 +499,33 @@ def recursive_feature_inclusion(
             print("Terminating algorithm at N={} features after {} iterations with a best score of {}".format(len(best_features), i+1, best_score), file=log)
     
     history = pd.DataFrame(history, index=list(map(lambda x: ("splits", x), cv_labels))).T
-    # if validation_set_provided:
-    #     history[("validation","score")] = pd.Series(validation_scores)
+    # if testing_set_provided:
+    #     history[("testing","score")] = pd.Series(testing_scores)
     history.index = feature_tuples
     history.index.name = "features"
     
     # Summary
     average_scores = history.mean(axis=1)
     sems = history.sem(axis=1)
-    if validation_set_provided:
-        validation_scores = pd.Series(validation_scores)
-        validation_scores.index = feature_tuples
+    if testing_set_provided:
+        testing_scores = pd.Series(testing_scores)
+        testing_scores.index = feature_tuples
     else:
-        validation_scores = pd.Series([np.nan]*len(feature_tuples), index=feature_tuples)
+        testing_scores = pd.Series([np.nan]*len(feature_tuples), index=feature_tuples)
     
     history.insert(loc=0, column=("summary", "number_of_features"),value = history.index.map(len))
     history.insert(loc=1, column=("summary", "average_score"),value = average_scores)
     history.insert(loc=2, column=("summary", "sem"),value = sems)
-    history.insert(loc=3, column=("summary", "validation_score"), value = validation_scores)
-    history.insert(loc=4, column=("summary", "∆(validation_score-average_score)"), value = average_scores - validation_scores)
+    history.insert(loc=3, column=("summary", "testing_score"), value = testing_scores)
+    history.insert(loc=4, column=("summary", "∆(testing_score-average_score)"), value = average_scores - testing_scores)
 
     history.columns = pd.MultiIndex.from_tuples(history.columns)
 
     
     # Highest scoring features (not necessarily the best since there can be many features added with minimal gains)
-    # if optimize_validation_score:
-    #     highest_score = history[("summary", "validation_score")].max()
-    #     highest_scoring_features = list(history.loc[history[("summary", "validation_score")] == highest_score].sort_values(
+    # if optimize_testing_score:
+    #     highest_score = history[("summary", "testing_score")].max()
+    #     highest_scoring_features = list(history.loc[history[("summary", "testing_score")] == highest_score].sort_values(
     #         by=[("summary", "average_score"), ("summary", "number_of_features")], 
     #         ascending=[False, less_features_is_better]).index[0])
     # else:
@@ -534,18 +533,25 @@ def recursive_feature_inclusion(
     highest_scoring_features = list(history.loc[history[("summary", "average_score")] == highest_score, ("summary", "number_of_features")].sort_values(ascending=less_features_is_better).index[0])
     
     # # Best results
-    # if optimize_validation_score:
-    #     # best_features = list(history.loc[history[("summary", "validation_score")] == best_score].sort_values(
+    # if optimize_testing_score:
+    #     # best_features = list(history.loc[history[("summary", "testing_score")] == best_score].sort_values(
     #     #     by=[("summary", "average_score"), ("summary", "number_of_features")], 
     #     #     ascending=[False, less_features_is_better]).index[0])
     # else:
     #     best_features = list(history.loc[history[("summary", "average_score")] == best_score, ("summary", "number_of_features")].sort_values(ascending=less_features_is_better).index[0])
-    best_features = list(history.loc[history[("summary", "average_score")] == best_score].sort_values(
-        by=[("summary", "validation_score"), ("summary", "average_score"), ("summary", "number_of_features")], 
-        ascending=[False, False, less_features_is_better]).index[0])
+
+    if testing_set_provided:
+        best_features = list(history.sort_values(
+            by=[("summary", "testing_score"), ("summary", "average_score"), ("summary", "number_of_features")], 
+            ascending=[False, False, less_features_is_better]).index[0])
+
+    else:
+        best_features = list(history.loc[history[("summary", "average_score")] == best_score].sort_values(
+            by=[("summary", "testing_score"), ("summary", "average_score"), ("summary", "number_of_features")], 
+            ascending=[False, False, less_features_is_better]).index[0])
     
     best_estimator_sem = history.loc[[tuple(best_features)],("summary","sem")].values[0]
-    best_estimator_validation_score = history.loc[[tuple(best_features)],("summary","validation_score")].values[0]
+    best_estimator_testing_score = history.loc[[tuple(best_features)],("summary","testing_score")].values[0]
 
     best_estimator_rci = clone(estimator)
     X_best_features = transform(X=X.loc[:,best_features], method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
@@ -596,8 +602,8 @@ def recursive_feature_inclusion(
         highest_scoring_features=highest_scoring_features,
         cv_splits=cv_splits, 
         cv_labels=cv_labels,
-        validation_scores=validation_scores,
-        best_estimator_validation_score=best_estimator_validation_score,
+        testing_scores=testing_scores,
+        best_estimator_testing_score=best_estimator_testing_score,
         ),
         name="recursive_feature_elimination",
     )
@@ -607,14 +613,14 @@ def recursive_feature_inclusion(
 def plot_scores_line(
     average_scores:pd.Series, 
     sem:pd.Series, 
-    validation_scores:pd.Series=None, 
+    testing_scores:pd.Series=None, 
     horizontal_lines=True,
     vertical_lines="auto",
     title=None,
     figsize=(13,3), 
     linecolor="black",
     errorcolor="gray",
-    validation_linecolor="red",
+    testing_linecolor="red",
     style="seaborn-white",
     xlim=None,
     ylim=None,
@@ -650,9 +656,9 @@ def plot_scores_line(
         average_scores.plot(ax=ax, color=linecolor, label="Average score", **kwargs)
         x_grid = np.arange(average_scores.size)
         ax.fill_between(x_grid, y1=average_scores-sem, y2=average_scores+sem, alpha=alpha, color=errorcolor, label="SEM")
-        if validation_scores is not None:
-            if not np.all(validation_scores.isnull()):
-                validation_scores.plot(ax=ax, color=validation_linecolor, label="Validation score", **kwargs)
+        if testing_scores is not None:
+            if not np.all(testing_scores.isnull()):
+                testing_scores.plot(ax=ax, color=testing_linecolor, label="Testing score", **kwargs)
 
         rci = np.argmax(average_scores.values) 
         if vertical_lines == "auto":
@@ -833,14 +839,14 @@ def plot_recursive_feature_selection(
     number_of_features:pd.Series, 
     average_scores:pd.Series, 
     # sem:pd.Series=None, 
-    # validation_scores:pd.Series=None,
+    # Testing_scores:pd.Series=None,
     min_features:int=None,
     max_features:int=None,
     min_score:float=None,
     max_score:float=None,
     ax=None,
     color="darkslategray",
-    color_validation="red",
+    color_testing="red",
     linewidth=0.618,
     alpha=0.618,
     edgecolor="black", 
@@ -913,7 +919,7 @@ def plot_recursive_feature_selection(
 def plot_scores_comparison(
     number_of_features:pd.Series, 
     average_scores:pd.Series, 
-    validation_scores:pd.Series=None,
+    testing_scores:pd.Series=None,
     min_features:int=None,
     max_features:int=None,
     min_score:float=None,
@@ -927,17 +933,18 @@ def plot_scores_comparison(
     figsize=(8,5),
     title=None,
     xlabel="Average Score",
-    ylabel="Validation Score",
+    ylabel="Testing Score",
 
     feature_to_size_function = "auto",
 
     xtick_rotation=0,
-    show_xgrid=False,
+    show_xgrid=True,
     show_ygrid=True,
     # show_zgrid=True,
 
     show_xticks=True, 
     show_legend=True,
+    legend_markers=["min", "25%", "50%", "75%", "max"],
     xlabel_kws=dict(), 
     ylabel_kws=dict(), 
     # zlabel_kws=dict(), 
@@ -953,12 +960,14 @@ def plot_scores_comparison(
 
     assert isinstance(number_of_features, pd.Series)
     assert isinstance(average_scores, pd.Series)
-    assert isinstance(validation_scores, pd.Series)
+    assert isinstance(testing_scores, pd.Series)
+    assert set(legend_markers) <= set(["min", "25%", "50%", "75%", "max"]), 'legend_markers must be a subset of ["min", "25%", "50%", "75%", "max"]'
+    legend_markers = sorted(legend_markers, key=lambda x:["min", "25%", "50%", "75%", "max"].index(x))
 
     assert np.all(number_of_features.index == average_scores.index)
-    assert np.all(number_of_features.index == validation_scores.index)
+    assert np.all(number_of_features.index == testing_scores.index)
 
-    df = pd.DataFrame([number_of_features, average_scores, validation_scores], index=["number_of_features", "average_scores", "validation_scores"]).T
+    df = pd.DataFrame([number_of_features, average_scores, testing_scores], index=["number_of_features", "average_scores", "testing_scores"]).T
 
     if min_features:
         df = df.query("number_of_features >= {}".format(min_features))
@@ -969,15 +978,15 @@ def plot_scores_comparison(
     if max_score:
         df = df.query("average_scores <= {}".format(max_score))
     if min_score:
-        df = df.query("validation_scores >= {}".format(min_score))
+        df = df.query("testing_scores >= {}".format(min_score))
     if max_score:
-        df = df.query("validation_scores <= {}".format(max_score))
+        df = df.query("testing_scores <= {}".format(max_score))
 
     if feature_to_size_function == "auto":
         def feature_to_size_function(n):
             return 100/n
     assert hasattr(feature_to_size_function, "__call__")
-    s = feature_to_size_function(number_of_features)
+    marker_sizes = feature_to_size_function(number_of_features)
 
     with plt.style.context(style):
         _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
@@ -997,8 +1006,8 @@ def plot_scores_comparison(
             fig = plt.gcf()
 
 
-        # ax.scatter(xs=df["number_of_features"].values, ys=df["average_scores"].values, zs=df["validation_scores"], edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color, **kwargs)
-        ax.scatter(x=df["average_scores"].values, y=df["validation_scores"], s=s, edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color, **kwargs)
+        # ax.scatter(xs=df["number_of_features"].values, ys=df["average_scores"].values, zs=df["testing_scores"], edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color, **kwargs)
+        ax.scatter(x=df["average_scores"].values, y=df["testing_scores"], s=marker_sizes, edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color, **kwargs)
 
 
         ax.set_xlabel(xlabel, **_xlabel_kws)
@@ -1009,14 +1018,18 @@ def plot_scores_comparison(
         if title:
             ax.set_title(title, **_title_kws)
         if show_legend:
-            legendary_features = number_of_features.describe()[["25%", "50%", "75%", "max"]].astype(int)
+            legendary_features = number_of_features.describe()[legend_markers].astype(int)
             
             legend_elements = list()
-            for n in legendary_features.values:
-                marker = plt.Line2D([], [], color=color, marker='o', linestyle='None', markersize=feature_to_size_function(n), label="$N$ = %d"%(n))
-                legend_elements.append(marker)
+            for i,n in legendary_features.items():
+                # marker = plt.Line2D([], [], color=color, marker='o', linestyle='None', markersize=feature_to_size_function(n), label="$N$ = %d"%(n))
+                # legend_elements.append(marker)
+                i = i.replace("%","\%")
+                legend_marker = ax.scatter([], [], s=feature_to_size_function(n), label="$N_{%s}$ = %d"%(i,n), color=color, marker='o')
+                legend_elements.append(legend_marker)
 
-            legend = ax.legend(handles=legend_elements, markerscale=1,title="$N_{Features}$",  **_legend_kws)
+
+            legend = ax.legend(handles=legend_elements,  title="$N_{Features}$",  markerscale=1, **_legend_kws)
             
         if show_xgrid:
             ax.xaxis.grid(True)
@@ -1094,7 +1107,7 @@ class ClairvoyanceBase(object):
         self.target_type = target_type
         self.is_fitted_weights = False
         self.is_fitted_rci = False
-        self.validation_set_provided = False
+        self.testing_set_provided = False
         self.n_draws = n_draws
         self.n_jobs = n_jobs
         self.random_state = random_state
@@ -1421,8 +1434,8 @@ class ClairvoyanceBase(object):
         estimator=None, 
         X:pd.DataFrame=None, 
         y:pd.Series=None, 
-        X_validation:pd.DataFrame=None,
-        y_validation:pd.Series=None,
+        X_testing:pd.DataFrame=None,
+        y_testing:pd.Series=None,
         cv=(5,3), 
         minimum_score=None, 
         metric=np.mean, 
@@ -1437,7 +1450,7 @@ class ClairvoyanceBase(object):
         cv_prefix="cv=", 
         copy_X_rci=True,
         progress_message="Recursive feature inclusion",
-        # optimize_validation_score = "auto",
+        # optimize_testing_score = "auto",
 
         ):
         assert self.is_fitted_weights, "Please `fit` model before proceeding."
@@ -1459,21 +1472,21 @@ class ClairvoyanceBase(object):
         self.clairvoyance_feature_weights_ = self.get_weights(minimum_score=minimum_score, metrics=metric).sort_values(ascending=False)
         self.rci_parameters_ = {"estimator":estimator, "cv":cv, "minimum_score":minimum_score, "metric":metric, "early_stopping":early_stopping, "target_score":target_score, "less_features_is_better":less_features_is_better}
         
-        # Validation
-        X_validation_is_provided = X_validation is not None
-        y_validation_is_provided = y_validation is not None
+        # Testing
+        X_testing_is_provided = X_testing is not None
+        y_testing_is_provided = y_testing is not None
 
-        if X_validation_is_provided is not None:
-            assert y_validation_is_provided is not None, "If `X_validation` is provided then `y_validation` must be provided"
+        if X_testing_is_provided is not None:
+            assert y_testing_is_provided is not None, "If `X_testing` is provided then `y_testing` must be provided"
 
-        if y_validation_is_provided is not None:
-            assert X_validation_is_provided is not None, "If `y_validation` is provided then `X_validation` must be provided"
+        if y_testing_is_provided is not None:
+            assert X_testing_is_provided is not None, "If `y_testing` is provided then `X_testing` must be provided"
 
-        self.validation_set_provided = False
-        if all([X_validation_is_provided, y_validation_is_provided]):
-            assert np.all(X_validation.index == y_validation.index), "X_validation.index and y_validation.index must have the same ordering"
-            assert np.all(X_validation.columns == X.columns), "X_validation.columns and X.columns must have the same ordering"
-            self.validation_set_provided = True
+        self.testing_set_provided = False
+        if all([X_testing_is_provided, y_testing_is_provided]):
+            assert np.all(X_testing.index == y_testing.index), "X_testing.index and y_testing.index must have the same ordering"
+            assert np.all(X_testing.columns == X.columns), "X_testing.columns and X.columns must have the same ordering"
+            self.testing_set_provided = True
 
 
         # Recursive feature incusion
@@ -1505,17 +1518,17 @@ class ClairvoyanceBase(object):
             progress_message=progress_message,
             remove_zero_weighted_features=self.remove_zero_weighted_features,
             maximum_tries_to_remove_zero_weighted_features=self.maximum_tries_to_remove_zero_weighted_features,
-            X_validation=X_validation,
-            y_validation=y_validation,
-            # optimize_validation_score=optimize_validation_score,
+            X_testing=X_testing,
+            y_testing=y_testing,
+            # optimize_testing_score=optimize_testing_score,
             )
         
         # Results
-        # self.validation_scores_ = rci_results["validation_scores"]
+        # self.testing_scores_ = rci_results["testing_scores"]
         self.history_ = rci_results["history"]
         if self.remove_zero_weighted_features:
-            if self.validation_set_provided:
-                self.history_ = self.history_.sort_values([("summary", "validation_score"), ("summary", "average_score"), ("summary", "number_of_features")], ascending=[False, False, less_features_is_better])
+            if self.testing_set_provided:
+                self.history_ = self.history_.sort_values([("summary", "testing_score"), ("summary", "average_score"), ("summary", "number_of_features")], ascending=[False, False, less_features_is_better])
             else:
                 self.history_ = self.history_.sort_values([("summary", "average_score"), ("summary", "number_of_features")], ascending=[False, less_features_is_better])
         self.highest_score_ = rci_results["highest_score"]
@@ -1524,7 +1537,7 @@ class ClairvoyanceBase(object):
         self.best_estimator_sem_ = rci_results["best_estimator_sem"]
         self.best_features_ = rci_results["best_features"]
         self.best_estimator_rci_ = clone(estimator)
-        self.best_estimator_validation_score_ = rci_results["best_estimator_validation_score"]
+        self.best_estimator_testing_score_ = rci_results["best_estimator_testing_score"]
 
         X_rci = transform(X=X.loc[:,self.best_features_], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
         with warnings.catch_warnings(): #!
@@ -1541,6 +1554,18 @@ class ClairvoyanceBase(object):
         self.is_fitted_rci = True
         
         return self.history_
+
+    def get_history(self, sort_values_by=[("summary", "testing_score"), ("summary", "average_score"), ("summary", "number_of_features")], ascending=[False, False, True], summary=True):
+        assert self.is_fitted_rci, "Please run `fit` before proceeding."
+
+        df_history = self.history_.copy()
+
+        if sort_values_by is not None:
+            df_history = df_history.sort_values(by=sort_values_by, ascending=ascending)
+        if summary:
+            df_history = df_history["summary"]
+            
+        return df_history
     
     def plot_scores(
         self,
@@ -1559,7 +1584,7 @@ class ClairvoyanceBase(object):
         if self.remove_zero_weighted_features:
             return plot_recursive_feature_selection(number_of_features=self.history_[("summary", "number_of_features")], average_scores=self.history_[("summary", "average_score")],  **kwargs)
         else:
-            return plot_scores_line(average_scores=self.history_[("summary", "average_score")], sem=self.history_[("summary", "sem")], validation_scores=self.history_[("summary", "validation_score")], vertical_lines=vertical_lines, **kwargs)
+            return plot_scores_line(average_scores=self.history_[("summary", "average_score")], sem=self.history_[("summary", "sem")], testing_scores=self.history_[("summary", "testing_score")], vertical_lines=vertical_lines, **kwargs)
         
     def plot_weights(
         self,
@@ -1580,8 +1605,8 @@ class ClairvoyanceBase(object):
         **kwargs,
         ):
         assert self.is_fitted_rci, "Please run `recursive_feature_inclusion` before proceeding."
-        assert self.validation_set_provided, "Please run `recursive_feature_inclusion` with a validation set before proceeding."
-        return plot_recursive_feature_selection(number_of_features=self.history_[("summary", "number_of_features")], average_scores=self.history_[("summary", "average_score")],   validation_scores=self.history_[("summary", "validation_score")], **kwargs)
+        assert self.testing_set_provided, "Please run `recursive_feature_inclusion` with a testing set before proceeding."
+        return plot_scores_comparison(number_of_features=self.history_[("summary", "number_of_features")], average_scores=self.history_[("summary", "average_score")],   testing_scores=self.history_[("summary", "testing_score")], **kwargs)
 
     def copy(self):
         return copy.deepcopy(self)
@@ -1814,7 +1839,7 @@ class ClairvoyanceRecursive(object):
         self.target_type = target_type
         # self.is_fitted_weights = False
         self.is_fitted_rci = False
-        self.validation_set_provided = False
+        self.testing_set_provided = False
         self.n_draws = n_draws
         self.n_jobs = n_jobs
         self.random_state = random_state
@@ -1893,8 +1918,8 @@ class ClairvoyanceRecursive(object):
         self, 
         X:pd.DataFrame, 
         y:pd.Series, 
-        X_validation:pd.DataFrame=None,
-        y_validation:pd.Series=None,
+        X_testing:pd.DataFrame=None,
+        y_testing:pd.Series=None,
         stratify="auto", 
         split_size=0.618033, 
         cv=(5,3),
@@ -1922,21 +1947,21 @@ class ClairvoyanceRecursive(object):
         self.split_size = split_size
         self.maximum_number_of_features = maximum_number_of_features
 
-        # Validation
-        X_validation_is_provided = X_validation is not None
-        y_validation_is_provided = y_validation is not None
+        # Testing
+        X_testing_is_provided = X_testing is not None
+        y_testing_is_provided = y_testing is not None
 
-        if X_validation_is_provided is not None:
-            assert y_validation_is_provided is not None, "If `X_validation` is provided then `y_validation` must be provided"
+        if X_testing_is_provided is not None:
+            assert y_testing_is_provided is not None, "If `X_testing` is provided then `y_testing` must be provided"
 
-        if y_validation_is_provided is not None:
-            assert X_validation_is_provided is not None, "If `y_validation` is provided then `X_validation` must be provided"
+        if y_testing_is_provided is not None:
+            assert X_testing_is_provided is not None, "If `y_testing` is provided then `X_testing` must be provided"
 
-        self.validation_set_provided = False
-        if all([X_validation_is_provided, y_validation_is_provided]):
-            assert np.all(X_validation.index == y_validation.index), "X_validation.index and y_validation.index must have the same ordering"
-            assert np.all(X_validation.columns == X.columns), "X_validation.columns and X.columns must have the same ordering"
-            self.validation_set_provided = True
+        self.testing_set_provided = False
+        if all([X_testing_is_provided, y_testing_is_provided]):
+            assert np.all(X_testing.index == y_testing.index), "X_testing.index and y_testing.index must have the same ordering"
+            assert np.all(X_testing.columns == X.columns), "X_testing.columns and X.columns must have the same ordering"
+            self.testing_set_provided = True
             
         # Get cross-validation splits
         self.cv_splits_, self.cv_labels_ = format_cross_validation(cv, X, self.y_, stratify=self.stratify_, random_state=self.random_state, cv_prefix=cv_prefix, training_column=training_column, testing_column=testing_column)
@@ -2019,15 +2044,15 @@ class ClairvoyanceRecursive(object):
                                 print("Excluding results from [percentile={}, estimator_params={}] becaue baseline model could not be fit with parameter set".format(pctl, params), file=self.log)
                         else:
 
-                            baseline_validation_score = np.nan
-                            if self.validation_set_provided:
+                            baseline_testing_score = np.nan
+                            if self.testing_set_provided:
                                 # Transform features (if transformation = None, then there is no transformation)
-                                X_validation_query = transform(X=X_validation.loc[:,current_features_for_percentile], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
-                                baseline_validation_score = self.scorer(estimator=estimator, X=X_validation_query, y_true=y_validation)
+                                X_testing_query = transform(X=X_testing.loc[:,current_features_for_percentile], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
+                                baseline_testing_score = self.scorer(estimator=estimator, X=X_testing_query, y_true=y_testing)
 
                             baseline_rci_weights = format_weights(baseline_rci_weights)
                             self.results_baseline_[(pctl,"baseline", params)] = {
-                                "validation_score":baseline_validation_score,
+                                "testing_score":baseline_testing_score,
                                 "average_score":np.nanmean(baseline_scores_for_percentile), 
                                 "sem":stats.sem(baseline_scores_for_percentile),
                                 "number_of_features":X_query.shape[1], 
@@ -2055,11 +2080,11 @@ class ClairvoyanceRecursive(object):
                                         less_features_is_better=less_features_is_better, 
                                         progress_message=progress_message,
                                 )
-                                if self.validation_set_provided:
+                                if self.testing_set_provided:
                                     rci_params.update(
                                         dict(
-                                        X_validation=X_validation.loc[:,current_features_for_percentile],
-                                        y_validation=y_validation,
+                                        X_testing=X_testing.loc[:,current_features_for_percentile],
+                                        y_testing=y_testing,
                                         )
                                     )
 
@@ -2079,7 +2104,7 @@ class ClairvoyanceRecursive(object):
                                 rci_feature_weights = model.rci_feature_weights_[model.best_features_]
                                 if not np.any(rci_feature_weights.isnull()) and np.any(rci_feature_weights > 0):
                                     self.results_[(pctl, params, s)] = {
-                                        "validation_score":model.best_estimator_validation_score_,
+                                        "testing_score":model.best_estimator_testing_score_,
                                         "average_score":model.best_score_, 
                                         "sem":model.best_estimator_sem_,
                                         "number_of_features":len(model.best_features_), 
@@ -2111,13 +2136,13 @@ class ClairvoyanceRecursive(object):
                         print("Terminating algorithm. Only 1 feature remains.", file=self.log)
                     break
 
-            self.results_ = pd.DataFrame(self.results_).T.sort_values(["validation_score", "average_score", "number_of_features", "sem"], ascending=[False, False,less_features_is_better, True])
+            self.results_ = pd.DataFrame(self.results_).T.sort_values(["testing_score", "average_score", "number_of_features", "sem"], ascending=[False, False,less_features_is_better, True])
             self.results_.index.names = ["percentile", "hyperparameters", "minimum_score"]
 
-            self.results_ = self.results_.loc[:,["validation_score", "average_score", "sem", "number_of_features", "features", "clairvoyance_weights", "rci_weights", "estimator"]]
+            self.results_ = self.results_.loc[:,["testing_score", "average_score", "sem", "number_of_features", "features", "clairvoyance_weights", "rci_weights", "estimator"]]
 
             # Dtypes
-            for field in ["validation_score", "average_score", "sem"]:
+            for field in ["testing_score", "average_score", "sem"]:
                 self.results_[field] = self.results_[field].astype(float)
             for field in ["number_of_features"]:
                 self.results_[field] = self.results_[field].astype(int)
@@ -2141,11 +2166,12 @@ class ClairvoyanceRecursive(object):
             self.is_fitted_rci = True
             return self
 
-    def get_history(self, sort_values_by=[("summary", "validation_score"), ("summary", "average_score"), ("summary", "number_of_features")], ascending=[False, False, True]):
+    def get_history(self, sort_values_by=[("summary", "testing_score"), ("summary", "average_score"), ("summary", "number_of_features")], ascending=[False, False, True], summary=True):
         assert self.is_fitted_rci, "Please run `fit` before proceeding."
 
         dataframes = list()
         for params, df in self.history_.items(): # self.history_[(pctl,params, s)] = rci_history
+            df = df.copy()
             df.index = df.index.map(lambda x: (*params, x))
             df.index.names = ["percentile", "hyperparameters", "minimum_score", "features"]
             dataframes.append(df)
@@ -2153,6 +2179,8 @@ class ClairvoyanceRecursive(object):
         df_concatenated = pd.concat(dataframes, axis=0)
         if sort_values_by is not None:
             df_concatenated = df_concatenated.sort_values(by=sort_values_by, ascending=ascending)
+        if summary:
+            df_concatenated = df_concatenated["summary"]
             
         return df_concatenated
 
@@ -2170,24 +2198,24 @@ class ClairvoyanceRecursive(object):
         assert self.is_fitted_rci, "Please run `fit` before proceeding."
         
         if comprehensive == "auto":
-            if self.validation_set_provided:
+            if self.testing_set_provided:
                 comprehensive = True 
             else:
                 comprehensive = False
             
         if comprehensive:
-            df = self.get_history()
-            number_of_features = df[("summary","number_of_features")]
-            average_scores = df[("summary", "average_score")]
-            # validation_scores = df[("summary", "validation_score")]
+            df = self.get_history(summary=True)
+            number_of_features = df["number_of_features"]
+            average_scores = df["average_score"]
+            # Testing_scores = df[("summary", "testing_score")]
         else:
             number_of_features = self.results_["number_of_features"]
             average_scores = self.results_["average_score"]
-            validation_scores = self.results_["validation_score"]
+            testing_scores = self.results_["testing_score"]
             if include_baseline:
                 number_of_features = pd.concat([number_of_features, self.results_baseline_["number_of_features"]])
                 average_scores = pd.concat([average_scores, self.results_baseline_["average_score"]])
-                # validation_scores = pd.concat([validation_scores, self.results_baseline_["validation_score"]])
+                # Testing_scores = pd.concat([testing_scores, self.results_baseline_["testing_score"]])
 
         return plot_recursive_feature_selection(number_of_features=number_of_features, average_scores=average_scores,  **kwargs)
 
@@ -2196,12 +2224,12 @@ class ClairvoyanceRecursive(object):
         **kwargs,
         ):
         assert self.is_fitted_rci, "Please run `recursive_feature_inclusion` before proceeding."
-        assert self.validation_set_provided, "Please run `recursive_feature_inclusion` with a validation set before proceeding."
-        df = self.get_history()
-        number_of_features = df[("summary","number_of_features")]
-        average_scores = df[("summary", "average_score")]
-        validation_scores = df[("summary", "validation_score")]
-        return plot_scores_comparison(number_of_features=number_of_features, average_scores=average_scores,   validation_scores=validation_scores, **kwargs)
+        assert self.testing_set_provided, "Please run `recursive_feature_inclusion` with a testing set before proceeding."
+        df = self.get_history(summary=True)
+        number_of_features = df["number_of_features"]
+        average_scores = df["average_score"]
+        testing_scores = df["testing_score"]
+        return plot_scores_comparison(number_of_features=number_of_features, average_scores=average_scores,   testing_scores=testing_scores, **kwargs)
 
     def to_file(self, path:str):
         write_object(self, path)  
@@ -2222,9 +2250,14 @@ _______        _______ _____  ______ _    _  _____  __   __ _______ __   _ _____
     print(s, file=sys.stderr)
     print("Hello There.\nI live here: https://github.com/jolespin/clairvoyance", file=sys.stderr)
     if len(sys.argv) > 0:
-        if sys.argv[1] == "test":
+        if sys.argv[1] in {"--test", "-t"}:
+            from sklearn.linear_model import LogisticRegression
+            from sklearn.tree import DecisionTreeClassifier
+
+            # 1.
+
             # Classification
-            print("\nRunning test for `ClairvoyanceClassification`", file=sys.stderr)
+            print(format_header("1. Running test for `ClairvoyanceClassification` on iris dataset with noise"), file=sys.stderr)
             import numpy as np
             import pandas as pd
             from sklearn.datasets import load_iris
@@ -2238,8 +2271,8 @@ _______        _______ _____  ______ _    _  _____  __   __ _______ __   _ _____
             target_names = load_iris().target_names
             y = y.map(lambda i: target_names[i])
 
-            # Add 996 noise features (total = 1000 features) in the same range of values as the original features
-            number_of_noise_features = 46
+            # Add 21 noise features (total = 25 features) in the same range of values as the original features
+            number_of_noise_features = 21
             vmin = X.values.ravel().min()
             vmax = X.values.ravel().max()
             X_noise = pd.DataFrame(
@@ -2271,8 +2304,9 @@ _______        _______ _____  ______ _    _  _____  __   __ _______ __   _ _____
             history = clf.recursive_feature_inclusion(early_stopping=10)
             print(history.head(), file=sys.stdout)
 
+            # 2.
             # Regression
-            print("\nRunning test for `ClairvoyanceRegression`", file=sys.stderr)
+            print(format_header("2. Running test for `ClairvoyanceRegression` on boston dataset with noise"), file=sys.stderr)
             # from sklearn.datasets import fetch_openml
             from sklearn.tree import DecisionTreeRegressor
             from sklearn.model_selection import train_test_split
@@ -2286,14 +2320,14 @@ _______        _______ _____  ______ _    _  _____  __   __ _______ __   _ _____
             X = pd.DataFrame(data, columns=['CRIM', 'ZN', 'INDUS', 'CHAS', 'NOX', 'RM', 'AGE', 'DIS', 'RAD', 'TAX', 'PTRATIO', 'B', 'LSTAT'])
             y = pd.Series(target)
 
-            number_of_noise_features = 50 - X.shape[1]
+            number_of_noise_features = 25 - X.shape[1]
             X_noise = pd.DataFrame(np.random.RandomState(0).normal(size=(X.shape[0], number_of_noise_features)),  columns=map(lambda j: f"noise_{j}", range(number_of_noise_features)))
             X_housing_with_noise = pd.concat([X, X_noise], axis=1)
             X_normalized = X_housing_with_noise - X_housing_with_noise.mean(axis=0).values
             X_normalized = X_normalized/X_normalized.std(axis=0).values
 
-            # Let's fit the model but leave a held out validation set
-            X_training, X_validation, y_training, y_validation = train_test_split(X_normalized, y, random_state=0, test_size=0.1618)
+            # Let's fit the model but leave a held out testing set
+            X_training, X_testing, y_training, y_testing = train_test_split(X_normalized, y, random_state=0, test_size=0.1618)
 
             # Get parameters
             estimator = DecisionTreeRegressor(random_state=0)
@@ -2302,11 +2336,12 @@ _______        _______ _____  ______ _    _  _____  __   __ _______ __   _ _____
             # Fit model
             reg = ClairvoyanceRegression(name="Housing", n_jobs=-1, n_draws=10, estimator=estimator, param_grid=param_grid, verbose=1)
             reg.fit(X_training, y_training)
-            history = reg.recursive_feature_inclusion(early_stopping=10, X=X_training, y=y_training, X_validation=X_validation, y_validation=y_validation)
+            history = reg.recursive_feature_inclusion(early_stopping=10, X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing)
             print(history.head(), file=sys.stdout)
 
+            # 3.
             # Recursive
-            print("\nRunning test for `ClairvoyanceRecursive`", file=sys.stderr)
+            print(format_header("3. Running test for `ClairvoyanceRecursive` on iris dataset with noise"), file=sys.stderr)
             from sklearn.tree import DecisionTreeClassifier
 
             X_normalized = X_iris_with_noise - X_iris_with_noise.mean(axis=0).values
@@ -2319,8 +2354,8 @@ _______        _______ _____  ______ _    _  _____  __   __ _______ __   _ _____
             estimator=DecisionTreeClassifier()
             param_grid={
                 "criterion":["gini","entropy"],
-                "max_features":["log2", "sqrt", None, 0.382, 0.618],
-                "min_samples_leaf":[1,2,3,5,8, 13],
+                "max_features":["log2", "sqrt", 0.382, 0.618],
+                "min_samples_leaf":[1,2,3,5,8],
             }
 
             # Instantiate model
@@ -2330,13 +2365,32 @@ _______        _______ _____  ______ _    _  _____  __   __ _______ __   _ _____
                 n_draws=10, 
                 estimator=estimator, 
                 param_grid=param_grid, 
-                percentiles=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.925, 0.95, 0.975, 0.99],
-                minimum_scores=[-np.inf, 0.382, 0.5],
+                percentiles=[0.0, 0.25, 0.5, 0.75, 0.9, 0.925, 0.95, 0.975, 0.99],
+                minimum_scores=[-np.inf, 0.382],
                 verbose=0,
             )
             rci.fit(X_normalized, y)
             print(rci.results_.head(), file=sys.stdout)
+
+            # 4.
+            print(format_header("4. Running test for `ClairvoyanceRecursive` on iris dataset with noise [includes testing data]"), file=sys.stderr)
+
+            X_training, X_testing, y_training, y_testing = train_test_split(X_normalized, y, random_state=0, test_size=0.1618)
+
+            # Instantiate model
+            rci = ClairvoyanceRecursive(
+                n_jobs=-1, 
+                scorer="accuracy", 
+                n_draws=10, 
+                estimator=estimator, 
+                param_grid=param_grid, 
+                percentiles=[0.0, 0.25, 0.5, 0.75, 0.9, 0.925, 0.95, 0.975, 0.99],
+                minimum_scores=[-np.inf, 0.382],
+                verbose=0,
+            )
+            rci.fit(X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing)
+            print(rci.results_.head(), file=sys.stdout)
         else:
-            print("Unrecognized command.  Available commands {test}", file=sys.stderr)
+            print("Unrecognized command.  Available commands {--test|-t}", file=sys.stderr)
 if __name__ == "__main__":
     main()
