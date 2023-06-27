@@ -18,7 +18,11 @@ Reimplementation for `Clairvoyance` from [Espinoza & Dupont et al. 2021](https:/
 
 ```
 # Stable:
+
+# via PyPI
 pip install clairvoyance_feature_selection
+
+# via Conda
 conda install -c jolespin clairvoyance
 
 # Developmental:
