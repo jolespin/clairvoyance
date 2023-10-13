@@ -12,7 +12,11 @@ Reimplementation for `Clairvoyance` from [Espinoza & Dupont et al. 2021](https:/
 #### Details:
 `import clairvoyance as cy`
 
-`__version__ = "2023.6.26"`
+Stable: `__version__ = "2023.6.26"`
+
+Developmental: `__version__ = "2023.10.13"`
+
+
 
 #### Installation
 

@@ -292,7 +292,7 @@ def recursive_feature_inclusion(
     feature_weight_attribute:str="auto",
     transformation=None,
     multiplicative_replacement="auto",
-    metric=np.mean, 
+    metric=np.nanmean, 
     early_stopping=25, 
     minimum_improvement_in_score=0.0,
     additional_feature_penalty=None,
@@ -418,7 +418,7 @@ def recursive_feature_inclusion(
                     )
                     _W = getattr(estimator, feature_weight_attribute)
                     _w = format_weights(_W)
-                    mask_zero_weight_features = format_weights(_W) != 0
+                    mask_zero_weight_features = _w != 0
 
                     if np.all(mask_zero_weight_features):
                         X_rfi = transform(X=X_query, method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
@@ -442,8 +442,9 @@ def recursive_feature_inclusion(
 
                 # Training/Testing Scores
                 scores = cross_val_score(estimator=estimator, X=X_rfi, y=y, cv=cv_splits, n_jobs=n_jobs, scoring=scorer)
-
-                average_score = np.mean(scores)
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore', RuntimeWarning)
+                    average_score = np.nanmean(scores)
                 history[i] = scores #{"average_score":average_score, "sem":sem}
 
                 #! ---
@@ -530,83 +531,104 @@ def recursive_feature_inclusion(
     #         ascending=[False, less_features_is_better]).index[0])
     # else:
     highest_score = history[("summary", "average_score")].max()
-    highest_scoring_features = list(history.loc[history[("summary", "average_score")] == highest_score, ("summary", "number_of_features")].sort_values(ascending=less_features_is_better).index[0])
+    try:
+        highest_scoring_features = list(history.loc[history[("summary", "average_score")] == highest_score, ("summary", "number_of_features")].sort_values(ascending=less_features_is_better).index[0])
+        
     
-    # # Best results
-    # if optimize_testing_score:
-    #     # best_features = list(history.loc[history[("summary", "testing_score")] == best_score].sort_values(
-    #     #     by=[("summary", "average_score"), ("summary", "number_of_features")], 
-    #     #     ascending=[False, less_features_is_better]).index[0])
-    # else:
-    #     best_features = list(history.loc[history[("summary", "average_score")] == best_score, ("summary", "number_of_features")].sort_values(ascending=less_features_is_better).index[0])
+        # # Best results
+        # if optimize_testing_score:
+        #     # best_features = list(history.loc[history[("summary", "testing_score")] == best_score].sort_values(
+        #     #     by=[("summary", "average_score"), ("summary", "number_of_features")], 
+        #     #     ascending=[False, less_features_is_better]).index[0])
+        # else:
+        #     best_features = list(history.loc[history[("summary", "average_score")] == best_score, ("summary", "number_of_features")].sort_values(ascending=less_features_is_better).index[0])
 
-    if testing_set_provided:
-        best_features = list(history.sort_values(
-            by=[("summary", "testing_score"), ("summary", "average_score"), ("summary", "number_of_features")], 
-            ascending=[False, False, less_features_is_better]).index[0])
+        if testing_set_provided:
+            best_features = list(history.sort_values(
+                by=[("summary", "testing_score"), ("summary", "average_score"), ("summary", "number_of_features")], 
+                ascending=[False, False, less_features_is_better]).index[0])
 
-    else:
-        best_features = list(history.loc[history[("summary", "average_score")] == best_score].sort_values(
-            by=[("summary", "testing_score"), ("summary", "average_score"), ("summary", "number_of_features")], 
-            ascending=[False, False, less_features_is_better]).index[0])
-    
-    best_estimator_sem = history.loc[[tuple(best_features)],("summary","sem")].values[0]
-    best_estimator_testing_score = history.loc[[tuple(best_features)],("summary","testing_score")].values[0]
+        else:
+            best_features = list(history.loc[history[("summary", "average_score")] == best_score].sort_values(
+                by=[("summary", "testing_score"), ("summary", "average_score"), ("summary", "number_of_features")], 
+                ascending=[False, False, less_features_is_better]).index[0])
+        
+        best_estimator_sem = history.loc[[tuple(best_features)],("summary","sem")].values[0]
+        best_estimator_testing_score = history.loc[[tuple(best_features)],("summary","testing_score")].values[0]
 
-    best_estimator_rci = clone(estimator)
-    X_best_features = transform(X=X.loc[:,best_features], method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
+        best_estimator_rci = clone(estimator)
+        X_best_features = transform(X=X.loc[:,best_features], method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=ConvergenceWarning)
-        best_estimator_rci.fit(X_best_features, y)
-    
-    # Score statement
-    if verbose > 0:
-        if highest_score > best_score:
-            if additional_feature_penalty is not None:
-                print("Highest score was %0.3f with %d features but with `minimum_improvement_in_score=%f` penalty and `additional_feature_penalty` adjustment, the best score was %0.3f with %d features.\n^ Both are stored as .highest_score_ / .highest_scoring_features_ and .best_score_ / .best_feautres_, respectively. ^"%(highest_score, len(highest_scoring_features), minimum_improvement_in_score, best_score, len(best_features)), file=log)
-            else:
-                print("Highest score was %0.3f with %d features but with `minimum_improvement_in_score=%f` penalty, the best score was %0.3f with %d features.\n^ Both are stored as .highest_score_ / .highest_scoring_features_ and .best_score_ / .best_feautres_, respectively. ^"%(highest_score, len(highest_scoring_features), minimum_improvement_in_score, best_score, len(best_features)), file=log)
-    
-
-
-    # Full training dataset weights
-    W = getattr(best_estimator_rci, feature_weight_attribute)
-    rci_feature_weights = pd.Series(format_weights(W), index=best_features, name="rci_weights")
-    feature_weights = pd.DataFrame([pd.Series(initial_feature_weights,name=initial_feature_weights_name), rci_feature_weights]).T
-    feature_weights.columns = feature_weights.columns.map(lambda x: ("full_dataset", x))
-
-    # Cross validation weights
-    cv_weights = OrderedDict()
-    for id_cv, (training_index, testing_index) in zip(cv_labels, cv_splits):
-        X_training = transform(X=X.iloc[training_index].loc[:,best_features], method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
-        y_training = y.iloc[training_index]
-        clf = clone(estimator)
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
-            clf.fit(X_training, y_training)
-        cv_weights[id_cv] =  pd.Series(format_weights(getattr(clf, feature_weight_attribute)), index=best_features)
-    cv_weights = pd.DataFrame(cv_weights)
-    cv_weights.columns = cv_weights.columns.map(lambda x: ("cross_validation", x))
-    feature_weights = pd.concat([feature_weights, cv_weights], axis=1)
+            best_estimator_rci.fit(X_best_features, y)
+        
+        # Score statement
+        if verbose > 0:
+            if highest_score > best_score:
+                if additional_feature_penalty is not None:
+                    print("Highest score was %0.3f with %d features but with `minimum_improvement_in_score=%f` penalty and `additional_feature_penalty` adjustment, the best score was %0.3f with %d features.\n^ Both are stored as .highest_score_ / .highest_scoring_features_ and .best_score_ / .best_feautres_, respectively. ^"%(highest_score, len(highest_scoring_features), minimum_improvement_in_score, best_score, len(best_features)), file=log)
+                else:
+                    print("Highest score was %0.3f with %d features but with `minimum_improvement_in_score=%f` penalty, the best score was %0.3f with %d features.\n^ Both are stored as .highest_score_ / .highest_scoring_features_ and .best_score_ / .best_feautres_, respectively. ^"%(highest_score, len(highest_scoring_features), minimum_improvement_in_score, best_score, len(best_features)), file=log)
+        
 
-    return pd.Series(
-        dict(
-        history=history, 
-        best_score=best_score, 
-        best_estimator_sem=best_estimator_sem,
-        best_features=best_features,
-        best_estimator_rci=best_estimator_rci,
-        feature_weights=feature_weights,
-        highest_score=highest_score,
-        highest_scoring_features=highest_scoring_features,
-        cv_splits=cv_splits, 
-        cv_labels=cv_labels,
-        testing_scores=testing_scores,
-        best_estimator_testing_score=best_estimator_testing_score,
-        ),
-        name="recursive_feature_elimination",
-    )
+
+        # Full training dataset weights
+        W = getattr(best_estimator_rci, feature_weight_attribute)
+        rci_feature_weights = pd.Series(format_weights(W), index=best_features, name="rci_weights")
+        feature_weights = pd.DataFrame([pd.Series(initial_feature_weights,name=initial_feature_weights_name), rci_feature_weights]).T
+        feature_weights.columns = feature_weights.columns.map(lambda x: ("full_dataset", x))
+
+        # Cross validation weights
+        cv_weights = OrderedDict()
+        for id_cv, (training_index, testing_index) in zip(cv_labels, cv_splits):
+            X_training = transform(X=X.iloc[training_index].loc[:,best_features], method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
+            y_training = y.iloc[training_index]
+            clf = clone(estimator)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                clf.fit(X_training, y_training)
+            cv_weights[id_cv] =  pd.Series(format_weights(getattr(clf, feature_weight_attribute)), index=best_features)
+        cv_weights = pd.DataFrame(cv_weights)
+        cv_weights.columns = cv_weights.columns.map(lambda x: ("cross_validation", x))
+        feature_weights = pd.concat([feature_weights, cv_weights], axis=1)
+
+        return pd.Series(
+            dict(
+            history=history, 
+            best_score=best_score, 
+            best_estimator_sem=best_estimator_sem,
+            best_features=best_features,
+            best_estimator_rci=best_estimator_rci,
+            feature_weights=feature_weights,
+            highest_score=highest_score,
+            highest_scoring_features=highest_scoring_features,
+            cv_splits=cv_splits, 
+            cv_labels=cv_labels,
+            testing_scores=testing_scores,
+            best_estimator_testing_score=best_estimator_testing_score,
+            ),
+            name="recursive_feature_elimination",
+        )
+    except IndexError:
+        return pd.Series(
+            dict(
+            history=history, 
+            best_score=np.nan, 
+            best_estimator_sem=np.nan,
+            best_features=np.nan,
+            best_estimator_rci=np.nan,
+            feature_weights=np.nan,
+            highest_score=highest_score,
+            highest_scoring_features=np.nan,
+            cv_splits=cv_splits, 
+            cv_labels=cv_labels,
+            testing_scores=testing_scores,
+            best_estimator_testing_score=np.nan,
+            ),
+            name="recursive_feature_elimination",
+        )
+
 
 
 # Plotting
@@ -1049,7 +1071,7 @@ class ClairvoyanceBase(object):
         estimator,
         param_grid:dict,
         scorer,
-        method:str="symmetric",
+        method:str="asymmetric", #imbalanced?
         importance_getter="auto",
         n_draws=50,
         random_state=0,
@@ -1239,9 +1261,9 @@ class ClairvoyanceBase(object):
                 weight_B = format_weights(weight_B)
 
                 # v2: Rationale for taking mean is to minimize overfitting when selecting score thresholds using --minimum_threshold
-                return (np.mean([weight_A, weight_B], axis=0), np.mean([score_A_B, score_B_A]))
+                return (np.nanmean([weight_A, weight_B], axis=0), np.nanmean([score_A_B, score_B_A]))
 
-        def _fit_estimator_asymmetric(X_training, X_testing, y_training, y_testing, estimator):
+        def _fit_estimator_asymmetric(X_training, X_validation, y_training, y_validation, estimator):
             """
             Internal: Get coefs
             """
@@ -1254,7 +1276,7 @@ class ClairvoyanceBase(object):
                 # Fit
                 estimator.fit(X_training, y_training)
                 weights = getattr(estimator, self.feature_weight_attribute)
-                score = self.scorer(estimator=estimator, X=X_testing, y_true=y_testing)
+                score = self.scorer(estimator=estimator, X=X_validation, y_true=y_validation)
             
             # Avoid instances where all weights are 0
             weights_are_all_zeros = np.all(weights == 0)
@@ -1298,7 +1320,7 @@ class ClairvoyanceBase(object):
 
                 if method == "asymmetric":
                     # Split training data
-                    X_training, X_testing, y_training, y_testing = train_test_split(
+                    X_training, X_validation, y_training, y_validation = train_test_split(
                         X,
                         y,
                         test_size=split_size, 
@@ -1308,9 +1330,9 @@ class ClairvoyanceBase(object):
 
                     training_data = dict(
                         X_training=X_training,
-                        X_testing=X_testing,
+                        X_validation=X_validation,
                         y_training=y_training,
-                        y_testing=y_testing,
+                        y_validation=y_validation,
                     )
 
                 
@@ -1399,7 +1421,7 @@ class ClairvoyanceBase(object):
                                       
         return self
     
-    def get_weights(self, minimum_score=None, metrics=[np.mean, stats.sem], minimim_score_too_high_action="adjust"):
+    def get_weights(self, minimum_score=None, metrics=[np.nanmean, stats.sem], minimim_score_too_high_action="adjust"):
         assert self.is_fitted_weights, "Please `fit` model before proceeding."
         assert_acceptable_arguments(minimim_score_too_high_action, {"adjust", "fatal"})
 
@@ -1438,7 +1460,7 @@ class ClairvoyanceBase(object):
         y_testing:pd.Series=None,
         cv=(5,3), 
         minimum_score=None, 
-        metric=np.mean, 
+        metric=np.nanmean, 
         early_stopping=25, 
         target_score=-np.inf, 
         minimum_improvement_in_score=0.0, 
@@ -1759,7 +1781,7 @@ class ClairvoyanceRecursive(object):
         estimator,
         param_grid:dict,
         scorer,
-        method="symmetric",
+        method="asymmetric",
         importance_getter="auto",
         n_draws=10,
         random_state=0,
@@ -2017,7 +2039,7 @@ class ClairvoyanceRecursive(object):
                         print("Determining (and removing) minimum score thresholds that yield redundant feature ordering", file=self.log)
                     feature_ordering_from_minimum_scores = dict()
                     for s in self.minimum_scores:
-                        w = model.get_weights(s)["mean"].sort_values(ascending=False)
+                        w = model.get_weights(s)["nanmean"].sort_values(ascending=False)
                         feature_order = tuple(w.index.tolist())
                         if feature_order in feature_ordering_from_minimum_scores.values():
                             if self.verbose > 2:
@@ -2032,10 +2054,19 @@ class ClairvoyanceRecursive(object):
                     best_minimum_score_for_percentile = None
 
                     X_query = transform(X=self.X_initial_.loc[:,current_features_for_percentile], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
-                    for params, estimator in model.estimators_.items():      
+                    for params, estimator in model.estimators_.items(): 
+
+                        if self.verbose > 2:
+                            print("[Start] recursive feature inclusion [percentile={}, estimator_params={}]".format(pctl, params), file=self.log)
 
                         # Baseline
+                        self._debug = dict(X=X_query, y=self.y_, scoring=self.scorer, cv=self.cv_splits_, n_jobs=self.n_jobs) #?
+
                         baseline_scores_for_percentile = cross_val_score(estimator=estimator, X=X_query, y=self.y_, scoring=self.scorer, cv=self.cv_splits_, n_jobs=self.n_jobs)
+
+                        # break #?
+                        if self.verbose > 3:
+                            print("[Completed] Baseline cross-validation for training set [percentile={}, estimator_params={}]".format(pctl, params), file=self.log)
                         with warnings.catch_warnings():
                             warnings.filterwarnings("ignore", category=ConvergenceWarning)
                             baseline_rci_weights = getattr(estimator.fit(X_query, self.y_), self.feature_weight_attribute)
@@ -2049,7 +2080,8 @@ class ClairvoyanceRecursive(object):
                                 # Transform features (if transformation = None, then there is no transformation)
                                 X_testing_query = transform(X=X_testing.loc[:,current_features_for_percentile], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
                                 baseline_testing_score = self.scorer(estimator=estimator, X=X_testing_query, y_true=y_testing)
-
+                                if self.verbose > 3:
+                                    print("[Completed] Baseline cross-validation for testing set [percentile={}, estimator_params={}]".format(pctl, params), file=self.log)
                             baseline_rci_weights = format_weights(baseline_rci_weights)
                             self.results_baseline_[(pctl,"baseline", params)] = {
                                 "testing_score":baseline_testing_score,
@@ -2071,7 +2103,7 @@ class ClairvoyanceRecursive(object):
                                         y=self.y_, 
                                         cv=self.cv_splits_, 
                                         minimum_score=s, 
-                                        metric=np.mean, 
+                                        metric=np.nanmean, 
                                         early_stopping=self.early_stopping, 
                                         minimum_improvement_in_score=self.minimum_improvement_in_score, 
                                         additional_feature_penalty=self.additional_feature_penalty,
@@ -2117,6 +2149,9 @@ class ClairvoyanceRecursive(object):
                                     if self.verbose > 2:
                                         print("Excluding results from [percentile={}, estimator_params={}, minimum_score={}] becaue model could not be fit with parameter set".format(pctl, params, s), file=self.log)
                                 self.history_[(pctl,params, s)] = rci_history
+
+                                if self.verbose > 2:
+                                    print("[End] recursive feature inclusion [percentile={}, estimator_params={}]".format(pctl, params), file=self.log)
 
                                 # Reset estimator
                                 model.estimators_[params] = clone(estimator)

@@ -17,7 +17,7 @@
 # =======
 # Version
 # =======
-__version__= "2023.6.26"
+__version__= "2023.10.13"
 __author__ = "Josh L. Espinoza"
 __email__ = "jespinoz@jcvi.org, jol.espinoz@gmail.com"
 __url__ = "https://github.com/jolespin/clairvoyance"
