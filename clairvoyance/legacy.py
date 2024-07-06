@@ -2,7 +2,7 @@
 
 # Built-ins
 from ast import Or
-import os, sys, itertools, argparse, time, datetime, copy, warnings
+import os, sys, itertools, argparse, time, copy, warnings
 from collections import OrderedDict
 # from multiprocessing import cpu_count
 
@@ -11,10 +11,6 @@ import pandas as pd
 import numpy as np
 import xarray as xr
 
-## Plotting
-import matplotlib.pyplot as plt
-import seaborn as sns
-
 # Machine learning
 from scipy import stats
 from sklearn.metrics import get_scorer, make_scorer
@@ -22,267 +18,442 @@ from sklearn.model_selection import cross_val_score, train_test_split, RepeatedS
 from sklearn.base import clone, is_classifier, is_regressor
 from sklearn.exceptions import ConvergenceWarning, UndefinedMetricWarning
 
-# # Parallel
-# import ray
-# from ray.air.config import ScalingConfig
-# from ray.train.sklearn import SklearnTrainer
+# Clairvoyance
+from .utils import *
+from .transformations import legacy_transform as transform
 
-# Clairvoyance 
-try:
-    from . import __version__ 
-except ImportError:
-    __version__ = None
-    warnings.warn("Unable to load version information")
-
-# Soothsayer Utils
-from soothsayer_utils import (
-    assert_acceptable_arguments,
-    format_header,
-    format_duration,
-    # read_dataframe,
-    read_object,
-    write_object,
-    # to_precision,
-    pv,
-    flatten,
-)
-
-# Specify maximum number of threads
-# available_threads = cpu_count()
-
-# ==============================================================================
-# Functions
-# ==============================================================================
-# Total sum scaling
-def closure(X:pd.DataFrame):
-    sum_ = X.sum(axis=1)
-    return (X.T/sum_).T
-
-# Center Log-Ratio
-def clr(X:pd.DataFrame):
-    X_tss = closure(X)
-    X_log = np.log(X_tss)
-    geometric_mean = X_log.mean(axis=1)
-    return (X_log - geometric_mean.values.reshape(-1,1))
-
-# Transformations
-def transform(X, method="closure", axis=1, multiplicative_replacement="auto", verbose=0, log=sys.stdout):
-#     """
-#     Assumes X_data.index = Samples, X_data.columns = features
-#     axis = 0 = cols, axis = 1 = rows
-#     e.g. axis=1, method=closure: transform for relative abundance so each row sums to 1.
-#     "closure" = closure/total-sum-scaling
-#     "clr" = center log-ratio
-#     None = No transformation
-#     """
-    # Transpose for axis == 0
-    if axis == 0:
-        X = X.T
-
-    # Base output
-    X_transformed = X.copy()
-
-    # Checks
-    if X.ndim != 2:
-        raise ValueError("Input matrix must have two dimensions")
-    # if np.all(X == 0, axis=1).sum() > 0:
-    #     raise ValueError("Input matrix cannot have rows with all zeros")
-
-    # Transformed output
-    if method is not None:
-        if np.any(X.values < 0):
-            raise ValueError("Cannot have negative values")
-        if X.shape[1] > 1:
-            if method == "closure":
-                X_transformed = closure(X)
-            if method == "clr":
-                if multiplicative_replacement == "auto":
-                    if not np.all(X > 0):
-                        multiplicative_replacement = 1/X.shape[1]**2
-                    else:
-                        multiplicative_replacement = None
-                if multiplicative_replacement is None:
-                    multiplicative_replacement = 0
-                assert isinstance(multiplicative_replacement, (float,int,np.floating,np.integer))
-                X_transformed = clr(X + multiplicative_replacement)
+# Plotting
+def plot_scores_line(
+    average_scores:pd.Series, 
+    sem:pd.Series, 
+    testing_scores:pd.Series=None, 
+    horizontal_lines=True,
+    vertical_lines="auto",
+    title=None,
+    figsize=(13,3), 
+    linecolor="black",
+    errorcolor="gray",
+    testing_linecolor="red",
+    style="seaborn-v0_8-white",
+    xlim=None,
+    ylim=None,
+    ax=None, 
+    alpha=0.382, 
+    xlabel="$N_{Features}$", 
+    ylabel="Score", 
+    xtick_rotation=0,
+    show_xgrid=False,
+    show_ygrid=True,
+    show_xticks=True, 
+    show_legend=True,
+    xlabel_kws=dict(), 
+    ylabel_kws=dict(), 
+    xticklabel_kws=dict(), 
+    yticklabel_kws=dict(),
+    title_kws=dict(),
+    legend_kws=dict(),
+    **kwargs,
+    ):
+    with plt.style.context(style):
+        _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
+        _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
+        _ylabel_kws = {"fontsize":15}; _ylabel_kws.update(ylabel_kws)
+        _xticklabel_kws = {"fontsize":12, "rotation":xtick_rotation}; _xticklabel_kws.update(xticklabel_kws)
+        _yticklabel_kws = {"fontsize":12}; _yticklabel_kws.update(yticklabel_kws)
+        _legend_kws = {"fontsize":12}; _legend_kws.update(legend_kws)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
         else:
-            if verbose > 1:
-                print("Only 1 feature left.  Ignoring transformation.", file=log)
-
-    # Transpose back
-    if axis == 0:
-        X_transformed = X_transformed.T
-
-    return X_transformed
-
-def format_stratify(stratify, estimator_type:str, y:pd.Series):
-    assert_acceptable_arguments(estimator_type, {"classifier", "regressor"})
-    if isinstance(stratify, bool):
-        if stratify is True:
-            assert estimator_type == "classifier", "If `stratify=True` then the estimator must be a classifier.  Please provide a stratification grouping or select None for regressor."
-            stratify = "auto"
-        if stratify is False:
-            stratify = None
-    if isinstance(stratify, str):
-        assert stratify == "auto", "`stratify` must be 'auto', a pd.Series, or None"
-        if estimator_type == "classifier":
-            stratify = y.copy()
-        if estimator_type == "regressor":
-            stratify = None
-
-    if stratify is not None:
-        assert isinstance(stratify, pd.Series)
-        assert np.all(stratify.index == y.index)
-    return stratify
-
-def format_weights(W):
-    # with warnings.catch_warnings():
-        # warnings.filterwarnings("ignore", category=ConvergenceWarning)
-        # warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
-        # warnings.filterwarnings("ignore", category=UserWarning)
+            fig = plt.gcf()
         
-    W = np.abs(W)
-    if W.ndim > 1:
-        W = np.sum(W, axis=0)
-    W = W/W.sum()
-    return W
+        average_scores.plot(ax=ax, color=linecolor, label="Average score", **kwargs)
+        x_grid = np.arange(average_scores.size)
+        ax.fill_between(x_grid, y1=average_scores-sem, y2=average_scores+sem, alpha=alpha, color=errorcolor, label="SEM")
+        if testing_scores is not None:
+            if not np.all(testing_scores.isnull()):
+                testing_scores.plot(ax=ax, color=testing_linecolor, label="Testing score", **kwargs)
 
-def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, random_state=0, cv_prefix="cv=", training_column="training_index", testing_column="testing_index", return_type=tuple):
-    assert_acceptable_arguments({return_type}, (tuple, pd.DataFrame))
-    if return_type == tuple:
-        assert np.all(X.index == y.index), "`X.index` and `y.index` must be the same ordering"
-        index = X.index
-        number_of_observations = len(index)
-
-        # Simple stratified k-fold cross validation
-        if isinstance(cv, int):
-            splits = list()
-            labels = list()
+        rci = np.argmax(average_scores.values) 
+        if vertical_lines == "auto":
+            vertical_lines = rci
+        if isinstance(vertical_lines, (float,np.floating, int, np.integer)):
+            vertical_lines = [vertical_lines]
+        
+        for v in vertical_lines:
+            h = average_scores.iloc[v]
+            ax.axvline(v, color=linecolor, linestyle="--", linewidth=0.75, label="%d features (score = %0.3f)"%(v + 1, h))
+            if horizontal_lines:
+                ax.plot([0,v], [h,h], color=linecolor, linestyle="--", linewidth=0.75)
             
-            if isinstance(stratify, bool):
-                if stratify is True:
-                    stratify = y.copy()
-                if stratify is False:
-                    stratify = None
-
-            if stratify is not None:
-                assert isinstance(stratify, pd.Series), "If `stratify` is not None, it must be a pd.Series"
-                assert np.all(y.index == stratify.index), "If `stratify` is not None then it must have the same index as `y`"
-                assert stratify.dtype != float, "`stratify` cannot be floating point values"
-                if y.dtype == float:
-                    splitter = StratifiedKFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, stratify, groups=stratify)
-                else:
-                    splitter = StratifiedKFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, y, groups=stratify)
-            else:
-                splitter = KFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, y)
-
-            for i, (training_index, testing_index) in enumerate(splitter, start=1):
-                id_cv = "{}{}".format(cv_prefix, i)
-                splits.append([training_index, testing_index])
-                labels.append(id_cv)
-
-            return (splits, labels)
-
-        # Repeated stratified k-fold cross validation
-        if isinstance(cv, tuple):
-            assert len(cv) == 2, "If tuple is provided, it must be length 2"
-            assert map(lambda x: isinstance(x, int), cv), "If tuple is provided, both elements must be integers ≥ 2 for `RepeatedStratifiedKFold`"
-
-            splits = list()
-            labels = list()
-
-            if isinstance(stratify, bool):
-                if stratify is True:
-                    stratify = y.copy()
-                if stratify is False:
-                    stratify = None
-
-            if stratify is not None:
-                assert isinstance(stratify, pd.Series), "If `stratify` is not None, it must be a pd.Series"
-                assert np.all(y.index == stratify.index), "If `stratify` is not None then it must have the same index as `y`"
-                assert stratify.dtype != float, "`stratify` cannot be floating point values"
-                if y.dtype == float:
-                    splitter = RepeatedStratifiedKFold(n_splits=cv[0], n_repeats=cv[1], random_state=random_state).split(X, stratify, groups=stratify)
-                else:
-                    splitter = RepeatedStratifiedKFold(n_splits=cv[0], n_repeats=cv[1], random_state=random_state).split(X, y, groups=stratify)
-            else:
-                splitter = RepeatedKFold(n_splits=cv[0], n_repeats=cv[1], random_state=random_state).split(X, y)
-
-            for i, (training_index, testing_index) in enumerate(splitter, start=1):
-                id_cv = "{}{}".format(cv_prefix, i)
-                splits.append([training_index, testing_index])
-                labels.append(id_cv)
-
-            return (splits, labels)
-
-        # List
-        if isinstance(cv, (list, np.ndarray)):
-            assert all(map(lambda query: len(query) == 2, cv)), "If `cv` is provided as a list, each element must be a sub-list of 2 indicies (i.e., training and testing indicies)"
-            cv = pd.DataFrame(cv, columns=[training_column, testing_column])
-            cv.index = cv.index.map(lambda i: "{}{}".format(cv_prefix, i))
-
-        # DataFrame
-        if isinstance(cv, pd.DataFrame):
-            cv = cv.copy()
-            assert training_column in cv.columns
-            assert testing_column in cv.columns
-            assert np.all(cv[training_column].map(lambda x: isinstance(x, (list, np.ndarray)))), "`{}` must be either list or np.ndarray of indices".format(training_column)
-            assert np.all(cv[testing_column].map(lambda x: isinstance(x, (list, np.ndarray)))), "`{}` must be either list or np.ndarray of indices".format(testing_column)
-
-            index_values = flatten(cv.values, into=list)
-            query = index_values[0]
-            labels = list(cv.index)
-            if isinstance(query, (int, np.integer)):
-                assert all(map(lambda x: isinstance(x,(int, np.integer)), index_values)), "If `cv` is provided as a list or pd.DataFrame, all values must either be intger values or keys in the X.index"
-                assert np.all(np.unique(index_values) >= 0), "All values in `cv` must be positive integers"
-                maxv = max(index_values)
-                assert maxv < number_of_observations, "Index values in `cv` cannot exceed ({}) the number of observations ({}).".format(maxv, number_of_observations)
-            else:
-                missing_keys = set(index_values) - set(index)
-                assert len(missing_keys) == 0, "If index values in `cv` are keys and not integers, then all keys must be in `X.index`.  Missing keys: {}".format(missing_keys)
-                cv = cv.applymap(lambda observations: list(map(lambda x: X.index.get_loc(x), observations)))
-            cv = cv.applymap(np.asarray)
-            splits = cv.values.tolist()
-            return (splits, labels)
-    if return_type == pd.DataFrame:
-        splits, labels = format_cross_validation(cv=cv, X=X, y=y, stratify=stratify, random_state=random_state, cv_prefix=cv_prefix, training_column=training_column, testing_column=testing_column, return_type=tuple)
-        return pd.DataFrame(splits, index=labels, columns=[training_column, testing_column])
-
-def get_feature_importance_attribute(estimator, importance_getter):
-    estimator = clone(estimator)
-    _X = np.random.normal(size=(5,2))
-    if is_classifier(estimator):
-        _y = np.asarray(list("aabba"))
-    if is_regressor(estimator):
-        _y = np.asarray(np.random.normal(size=5))
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=ConvergenceWarning)
-        estimator.fit(_X,_y)
-    if importance_getter == "auto":
-        importance_getter = None
-        if hasattr(estimator, "coef_"):
-            importance_getter = "coef_"
-        if hasattr(estimator, "feature_importances_"):
-            importance_getter = "feature_importances_"
-        assert importance_getter is not None, "If `importance_getter='auto'`, `estimator` must be either a linear model with `.coef_` or a tree-based model with `.feature_importances_`"
-    assert hasattr(estimator, importance_getter), "Fitted estimator does not have feature weight attribute: `{}`".format(importance_getter)
-    return importance_getter
-
-def get_balanced_class_subset(y:pd.Series, size:float=0.1, random_state=None):
-    n = y.size
-    number_of_classes = y.nunique()
-    number_of_samples_in_subset = int(n * size)
-    subset_size_per_class = int(number_of_samples_in_subset/number_of_classes)
+        ax.set_xticks(x_grid)
+        if xlim is None:
+            xlim = (1,average_scores.size)
+        ax.set_xlim((xlim[0]-1, xlim[1]-1)) # Need to offset
+        if ylim:
+            ax.set_ylim(ylim)
+        if show_xticks:
+            ax.set_xticklabels(x_grid + 1, **_xticklabel_kws)
+        else:
+            ax.set_xticklabels([], fontsize=12)
+            
+        ax.set_xlabel(xlabel, **_xlabel_kws)
+        ax.set_ylabel(ylabel, **_ylabel_kws)
+        ax.set_yticklabels(map(lambda x:"%0.2f"%x, ax.get_yticks()), **_yticklabel_kws)
+        if title:
+            ax.set_title(title, **_title_kws)
+        if show_legend:
+            ax.legend(**_legend_kws)
+        if show_xgrid:
+            ax.xaxis.grid(True)
+        if show_ygrid:
+            ax.yaxis.grid(True)
+        return fig, ax
     
-    index = list()
-    for id_class in y.unique():
-        class_samples = y[lambda x: x == id_class].index
-        assert len(class_samples) >= subset_size_per_class
-        subset = np.random.RandomState(random_state).choice(class_samples, size=subset_size_per_class, replace=False)
-        index += subset.tolist()
-    return index
+def plot_weights_bar(
+    feature_weights:pd.Series, 
+    title=None,
+    figsize=(13,3), 
+    color="black",
+    style="seaborn-v0_8-white", 
+    ylim=None,
+    ax=None, 
+    ascending=False, 
+    xlabel="Features", 
+    ylabel="$W$", 
+    xtick_rotation=90,
+    show_xgrid=False,
+    show_ygrid=True,
+    show_xticks=True, 
+    show_legend=False,
+    xlabel_kws=dict(), 
+    ylabel_kws=dict(), 
+    xticklabel_kws=dict(), 
+    yticklabel_kws=dict(),
+    title_kws=dict(),
+    legend_kws=dict(),
+    **kwargs,
+    ):
+    with plt.style.context(style):
+        _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
+        _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
+        _ylabel_kws = {"fontsize":15}; _ylabel_kws.update(ylabel_kws)
+        _xticklabel_kws = {"fontsize":12, "rotation":xtick_rotation}; _xticklabel_kws.update(xticklabel_kws)
+        _yticklabel_kws = {"fontsize":12}; _yticklabel_kws.update(yticklabel_kws)
+        _legend_kws = {"fontsize":12}; _legend_kws.update(legend_kws)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+        else:
+            fig = plt.gcf()
+        
+        feature_weights = feature_weights.dropna()
+        if ascending is not None:
+            feature_weights = feature_weights.sort_values(ascending=ascending)
+        feature_weights.plot(ax=ax, color=color, label=ylabel, kind="bar", **kwargs)
+        ax.axhline(0, color="black", linewidth=0.618)
+        
+        if ylim:
+            ax.set_ylim(ylim)
+        if show_xticks:
+            ax.set_xticklabels(ax.get_xticklabels(), **_xticklabel_kws)
+        else:
+            ax.set_xticklabels([], fontsize=12)
+            
+        ax.set_xlabel(xlabel, **_xlabel_kws)
+        ax.set_ylabel(ylabel, **_ylabel_kws)
+        ax.set_yticklabels(map(lambda x:"%0.2f"%x, ax.get_yticks()), **_yticklabel_kws)
+        if title:
+            ax.set_title(title, **_title_kws)
+        if show_legend:
+            ax.legend(**_legend_kws)
+        if show_xgrid:
+            ax.xaxis.grid(True)
+        if show_ygrid:
+            ax.yaxis.grid(True)
+        return fig, ax
 
-def recursive_feature_inclusion(
+def plot_weights_box(
+    feature_weights:pd.DataFrame, 
+    title=None,
+    figsize=(13,3), 
+    color="white",
+    linecolor="coral",
+    swarmcolor="gray",
+    style="seaborn-v0_8-white", 
+    ylim=None,
+    ax=None, 
+    alpha=0.382,
+    ascending=False, 
+    xlabel="Features", 
+    ylabel="$W$", 
+    xtick_rotation=90,
+    show_swarm=False,
+    show_xgrid=False,
+    show_ygrid=True,
+    show_xticks=True, 
+    show_legend=False,
+    xlabel_kws=dict(), 
+    ylabel_kws=dict(), 
+    xticklabel_kws=dict(), 
+    yticklabel_kws=dict(),
+    title_kws=dict(),
+    legend_kws=dict(),
+    **kwargs,
+    ):
+    with plt.style.context(style):
+        _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
+        _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
+        _ylabel_kws = {"fontsize":15}; _ylabel_kws.update(ylabel_kws)
+        _xticklabel_kws = {"fontsize":12, "rotation":xtick_rotation}; _xticklabel_kws.update(xticklabel_kws)
+        _yticklabel_kws = {"fontsize":12}; _yticklabel_kws.update(yticklabel_kws)
+        _legend_kws = {"fontsize":12}; _legend_kws.update(legend_kws)
+        _box_kws = dict( linewidth=1.0, boxprops={"facecolor": color}, medianprops={"color": linecolor})
+        _box_kws.update(kwargs)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+        else:
+            fig = plt.gcf()
+        
+        feature_weights = feature_weights.dropna(how="all", axis=0)
+        if ascending is not None:
+            index = feature_weights.mean(axis=1).sort_values(ascending=ascending).index
+            feature_weights = feature_weights.loc[index]
+            
+        # feature_weights.T.plot(ax=ax, color=color, label=ylabel, kind="box")
+        
+        data = pd.melt(feature_weights.T, var_name="Feature", value_name="W")
+
+        sns.boxplot(data=data, x="Feature", y="W", ax=ax, **_box_kws)
+
+        if show_swarm:
+            sns.swarmplot(data=data, x="Feature", y="W", ax=ax, color=swarmcolor, alpha=alpha)
+        
+
+        if ylim:
+            ax.set_ylim(ylim)
+        if show_xticks:
+            ax.set_xticklabels(ax.get_xticklabels(), **_xticklabel_kws)
+        else:
+            ax.set_xticklabels([], fontsize=12)
+            
+        ax.set_xlabel(xlabel, **_xlabel_kws)
+        ax.set_ylabel(ylabel, **_ylabel_kws)
+        ax.set_yticklabels(map(lambda x:"%0.2f"%x, ax.get_yticks()), **_yticklabel_kws)
+        if title:
+            ax.set_title(title, **_title_kws)
+        if show_legend:
+            ax.legend(**_legend_kws)
+        if show_xgrid:
+            ax.xaxis.grid(True)
+        if show_ygrid:
+            ax.yaxis.grid(True)
+        return fig, ax
+
+def plot_recursive_feature_selection(
+    number_of_features:pd.Series, 
+    average_scores:pd.Series, 
+    # sem:pd.Series=None, 
+    # Testing_scores:pd.Series=None,
+    min_features:int=None,
+    max_features:int=None,
+    min_score:float=None,
+    max_score:float=None,
+    ax=None,
+    color="darkslategray",
+    color_testing="red",
+    linewidth=0.618,
+    alpha=0.618,
+    edgecolor="black", 
+    style="seaborn-v0_8-white",
+    figsize=(8,3),
+    title=None,
+    xlabel="$N_{Features}$",
+    ylabel="Score",
+    xtick_rotation=0,
+    show_xgrid=False,
+    show_ygrid=True,
+    show_xticks=True, 
+    show_legend=False,
+    xlabel_kws=dict(), 
+    ylabel_kws=dict(), 
+    xticklabel_kws=dict(), 
+    yticklabel_kws=dict(),
+    title_kws=dict(),
+    legend_kws=dict(),
+    **kwargs,
+    ):
+
+    assert isinstance(number_of_features, pd.Series)
+    assert isinstance(average_scores, pd.Series)
+    assert np.all(number_of_features.index == average_scores.index)
+    df = pd.DataFrame([number_of_features, average_scores], index=["number_of_features", "average_scores"]).T
+    # if sem is not None:
+    #     assert isinstance(sem, pd.Series)
+    #     assert np.all(df.index == sem.index)
+    #     df["sem"] = sem
+    
+    if min_features:
+        df = df.query("number_of_features >= {}".format(min_features))
+    if max_features:
+        df = df.query("number_of_features <= {}".format(max_features))
+    if min_score:
+        df = df.query("average_scores >= {}".format(min_score))
+    if max_score:
+        df = df.query("average_scores <= {}".format(max_score))
+        
+    with plt.style.context(style):
+        _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
+        _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
+        _ylabel_kws = {"fontsize":15}; _ylabel_kws.update(ylabel_kws)
+        _xticklabel_kws = {"fontsize":12, "rotation":xtick_rotation}; _xticklabel_kws.update(xticklabel_kws)
+        _yticklabel_kws = {"fontsize":12}; _yticklabel_kws.update(yticklabel_kws)
+        _legend_kws = {"fontsize":12}; _legend_kws.update(legend_kws)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+        else:
+            fig = plt.gcf()
+
+        # if sem is not None:
+        #     ax.errorbar(df["number_of_features"].values, df["average_scores"].values, yerr=df["sem"].values, alpha=0.1618, color=color)
+        ax.scatter(x=df["number_of_features"].values, y=df["average_scores"].values, edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color, **kwargs)
+
+        ax.set_xlabel(xlabel, **_xlabel_kws)
+        ax.set_ylabel(ylabel, **_ylabel_kws)
+        # ax.set_yticklabels(map(lambda x:"%0.2f"%x, ax.get_yticks()), **_yticklabel_kws)
+        if title:
+            ax.set_title(title, **_title_kws)
+        if show_legend:
+            ax.legend(**_legend_kws)
+        if show_xgrid:
+            ax.xaxis.grid(True)
+        if show_ygrid:
+            ax.yaxis.grid(True)
+        return fig, ax
+    
+def plot_scores_comparison(
+    number_of_features:pd.Series, 
+    average_scores:pd.Series, 
+    testing_scores:pd.Series=None,
+    min_features:int=None,
+    max_features:int=None,
+    min_score:float=None,
+    max_score:float=None,
+    ax=None,
+    color="darkslategray",
+    linewidth=0.618,
+    alpha=0.618,
+    edgecolor="black", 
+    style="seaborn-v0_8-white",
+    figsize=(8,5),
+    title=None,
+    xlabel="Average Score",
+    ylabel="Testing Score",
+
+    feature_to_size_function = "auto",
+
+    xtick_rotation=0,
+    show_xgrid=True,
+    show_ygrid=True,
+    # show_zgrid=True,
+
+    show_xticks=True, 
+    show_legend=True,
+    legend_markers=["min", "25%", "50%", "75%", "max"],
+    xlabel_kws=dict(), 
+    ylabel_kws=dict(), 
+    # zlabel_kws=dict(), 
+
+    xticklabel_kws=dict(), 
+    yticklabel_kws=dict(),
+    # zticklabel_kws=dict(),
+
+    title_kws=dict(),
+    legend_kws=dict(),
+    **kwargs,
+    ):
+
+    assert isinstance(number_of_features, pd.Series)
+    assert isinstance(average_scores, pd.Series)
+    assert isinstance(testing_scores, pd.Series)
+    assert set(legend_markers) <= set(["min", "25%", "50%", "75%", "max"]), 'legend_markers must be a subset of ["min", "25%", "50%", "75%", "max"]'
+    legend_markers = sorted(legend_markers, key=lambda x:["min", "25%", "50%", "75%", "max"].index(x))
+
+    assert np.all(number_of_features.index == average_scores.index)
+    assert np.all(number_of_features.index == testing_scores.index)
+
+    df = pd.DataFrame([number_of_features, average_scores, testing_scores], index=["number_of_features", "average_scores", "testing_scores"]).T
+
+    if min_features:
+        df = df.query("number_of_features >= {}".format(min_features))
+    if max_features:
+        df = df.query("number_of_features <= {}".format(max_features))
+    if min_score:
+        df = df.query("average_scores >= {}".format(min_score))
+    if max_score:
+        df = df.query("average_scores <= {}".format(max_score))
+    if min_score:
+        df = df.query("testing_scores >= {}".format(min_score))
+    if max_score:
+        df = df.query("testing_scores <= {}".format(max_score))
+
+    if feature_to_size_function == "auto":
+        def feature_to_size_function(n):
+            return 100/n
+    assert hasattr(feature_to_size_function, "__call__")
+    marker_sizes = feature_to_size_function(number_of_features)
+
+    with plt.style.context(style):
+        _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
+        _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
+        _ylabel_kws = {"fontsize":15}; _ylabel_kws.update(ylabel_kws)
+        # _zlabel_kws = {"fontsize":15}; _zlabel_kws.update(zlabel_kws)
+
+        _xticklabel_kws = {"fontsize":12, "rotation":xtick_rotation}; _xticklabel_kws.update(xticklabel_kws)
+        _yticklabel_kws = {"fontsize":12}; _yticklabel_kws.update(yticklabel_kws)
+        # _zticklabel_kws = {"fontsize":12}; _zticklabel_kws.update(zticklabel_kws)
+
+        _legend_kws = {"fontsize":12, "frameon":True, "title_fontsize":"x-large"}; _legend_kws.update(legend_kws)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+
+        else:
+            fig = plt.gcf()
+
+
+        # ax.scatter(xs=df["number_of_features"].values, ys=df["average_scores"].values, zs=df["testing_scores"], edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color, **kwargs)
+        ax.scatter(x=df["average_scores"].values, y=df["testing_scores"], s=marker_sizes, edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color, **kwargs)
+
+
+        ax.set_xlabel(xlabel, **_xlabel_kws)
+        ax.set_ylabel(ylabel, **_ylabel_kws)
+        # ax.set_zlabel(zlabel, **_zlabel_kws)
+
+        # ax.set_yticklabels(map(lambda x:"%0.2f"%x, ax.get_yticks()), **_yticklabel_kws)
+        if title:
+            ax.set_title(title, **_title_kws)
+        if show_legend:
+            legendary_features = number_of_features.describe()[legend_markers].astype(int)
+            
+            legend_elements = list()
+            for i,n in legendary_features.items():
+                # marker = plt.Line2D([], [], color=color, marker='o', linestyle='None', markersize=feature_to_size_function(n), label="$N$ = %d"%(n))
+                # legend_elements.append(marker)
+                i = i.replace("%","\%")
+                legend_marker = ax.scatter([], [], s=feature_to_size_function(n), label="$N_{%s}$ = %d"%(i,n), color=color, marker='o')
+                legend_elements.append(legend_marker)
+
+
+            legend = ax.legend(handles=legend_elements,  title="$N_{Features}$",  markerscale=1, **_legend_kws)
+            
+        if show_xgrid:
+            ax.xaxis.grid(True)
+        if show_ygrid:
+            ax.yaxis.grid(True)
+        # if show_zgrid:
+        #     ax.zaxis.grid(True)
+        return fig, ax
+
+
+def recursive_feature_addition(
     estimator, 
     X:pd.DataFrame, 
     y:pd.Series, 
@@ -308,7 +479,7 @@ def recursive_feature_inclusion(
     cv_prefix="cv=",
     verbose=0,
     log=sys.stdout,
-    progress_message="Recursive feature inclusion",
+    progress_message="Recursive feature addition",
     remove_zero_weighted_features=True,
     maximum_tries_to_remove_zero_weighted_features=1000,
     X_testing:pd.DataFrame=None,
@@ -392,13 +563,13 @@ def recursive_feature_inclusion(
 
     for i in iterable:
         features = initial_feature_weights.index[:i+1].tolist()
-        X_rfi = X.loc[:,features]
+        X_rfa = X.loc[:,features]
 
         continue_algorithm = True
 
         # Transform features (if transformation = None, then there is no transformation)
-        if X_rfi.shape[1] > 1: 
-            X_rfi = transform(X=X_rfi, method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
+        if X_rfa.shape[1] > 1: 
+            X_rfa = transform(X=X_rfa, method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
         else:
             if transformation is not None:
                 continue_algorithm = False
@@ -421,7 +592,7 @@ def recursive_feature_inclusion(
                     mask_zero_weight_features = _w != 0
 
                     if np.all(mask_zero_weight_features):
-                        X_rfi = transform(X=X_query, method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
+                        X_rfa = transform(X=X_query, method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
                         if verbose > 1:
                             if j > 0:
                                 print("[Success][Iteration={}, Try={}]: Removed all zero weighted features. The following features remain: {}".format(i, j, list(features)), file=log)
@@ -441,7 +612,7 @@ def recursive_feature_inclusion(
                 unique_feature_sets.append(feature_set)
 
                 # Training/Testing Scores
-                scores = cross_val_score(estimator=estimator, X=X_rfi, y=y, cv=cv_splits, n_jobs=n_jobs, scoring=scorer)
+                scores = cross_val_score(estimator=estimator, X=X_rfa, y=y, cv=cv_splits, n_jobs=n_jobs, scoring=scorer)
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore', RuntimeWarning)
                     average_score = np.nanmean(scores)
@@ -453,13 +624,13 @@ def recursive_feature_inclusion(
                 testing_score = np.nan
                 if testing_set_provided:
                     estimator.fit(
-                        X=X_rfi, 
+                        X=X_rfa, 
                         y=y,
                     )
                     
                     # Transform features (if transformation = None, then there is no transformation)
-                    X_testing_rfi = transform(X=X_testing.loc[:,features], method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
-                    testing_score = scorer(estimator=estimator, X=X_testing_rfi, y_true=y_testing)
+                    X_testing_rfa = transform(X=X_testing.loc[:,features], method=transformation, multiplicative_replacement=multiplicative_replacement, axis=1)
+                    testing_score = scorer(estimator=estimator, X=X_testing_rfa, y_true=y_testing)
                     testing_scores[i] = testing_score
                     # if optimize_testing_score:
                     #     query_score = testing_score
@@ -631,445 +802,15 @@ def recursive_feature_inclusion(
 
 
 
-# Plotting
-def plot_scores_line(
-    average_scores:pd.Series, 
-    sem:pd.Series, 
-    testing_scores:pd.Series=None, 
-    horizontal_lines=True,
-    vertical_lines="auto",
-    title=None,
-    figsize=(13,3), 
-    linecolor="black",
-    errorcolor="gray",
-    testing_linecolor="red",
-    style="seaborn-white",
-    xlim=None,
-    ylim=None,
-    ax=None, 
-    alpha=0.382, 
-    xlabel="$N_{Features}$", 
-    ylabel="Score", 
-    xtick_rotation=0,
-    show_xgrid=False,
-    show_ygrid=True,
-    show_xticks=True, 
-    show_legend=True,
-    xlabel_kws=dict(), 
-    ylabel_kws=dict(), 
-    xticklabel_kws=dict(), 
-    yticklabel_kws=dict(),
-    title_kws=dict(),
-    legend_kws=dict(),
-    **kwargs,
-    ):
-    with plt.style.context(style):
-        _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
-        _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
-        _ylabel_kws = {"fontsize":15}; _ylabel_kws.update(ylabel_kws)
-        _xticklabel_kws = {"fontsize":12, "rotation":xtick_rotation}; _xticklabel_kws.update(xticklabel_kws)
-        _yticklabel_kws = {"fontsize":12}; _yticklabel_kws.update(yticklabel_kws)
-        _legend_kws = {"fontsize":12}; _legend_kws.update(legend_kws)
-        if ax is None:
-            fig, ax = plt.subplots(figsize=figsize)
-        else:
-            fig = plt.gcf()
-        
-        average_scores.plot(ax=ax, color=linecolor, label="Average score", **kwargs)
-        x_grid = np.arange(average_scores.size)
-        ax.fill_between(x_grid, y1=average_scores-sem, y2=average_scores+sem, alpha=alpha, color=errorcolor, label="SEM")
-        if testing_scores is not None:
-            if not np.all(testing_scores.isnull()):
-                testing_scores.plot(ax=ax, color=testing_linecolor, label="Testing score", **kwargs)
-
-        rci = np.argmax(average_scores.values) 
-        if vertical_lines == "auto":
-            vertical_lines = rci
-        if isinstance(vertical_lines, (float,np.floating, int, np.integer)):
-            vertical_lines = [vertical_lines]
-        
-        for v in vertical_lines:
-            h = average_scores.iloc[v]
-            ax.axvline(v, color=linecolor, linestyle="--", linewidth=0.75, label="%d features (score = %0.3f)"%(v + 1, h))
-            if horizontal_lines:
-                ax.plot([0,v], [h,h], color=linecolor, linestyle="--", linewidth=0.75)
-            
-        ax.set_xticks(x_grid)
-        if xlim is None:
-            xlim = (1,average_scores.size)
-        ax.set_xlim((xlim[0]-1, xlim[1]-1)) # Need to offset
-        if ylim:
-            ax.set_ylim(ylim)
-        if show_xticks:
-            ax.set_xticklabels(x_grid + 1, **_xticklabel_kws)
-        else:
-            ax.set_xticklabels([], fontsize=12)
-            
-        ax.set_xlabel(xlabel, **_xlabel_kws)
-        ax.set_ylabel(ylabel, **_ylabel_kws)
-        ax.set_yticklabels(map(lambda x:"%0.2f"%x, ax.get_yticks()), **_yticklabel_kws)
-        if title:
-            ax.set_title(title, **_title_kws)
-        if show_legend:
-            ax.legend(**_legend_kws)
-        if show_xgrid:
-            ax.xaxis.grid(True)
-        if show_ygrid:
-            ax.yaxis.grid(True)
-        return fig, ax
-    
-def plot_weights_bar(
-    feature_weights:pd.Series, 
-    title=None,
-    figsize=(13,3), 
-    color="black",
-    style="seaborn-white", 
-    ylim=None,
-    ax=None, 
-    ascending=False, 
-    xlabel="Features", 
-    ylabel="$W$", 
-    xtick_rotation=90,
-    show_xgrid=False,
-    show_ygrid=True,
-    show_xticks=True, 
-    show_legend=False,
-    xlabel_kws=dict(), 
-    ylabel_kws=dict(), 
-    xticklabel_kws=dict(), 
-    yticklabel_kws=dict(),
-    title_kws=dict(),
-    legend_kws=dict(),
-    **kwargs,
-    ):
-    with plt.style.context(style):
-        _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
-        _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
-        _ylabel_kws = {"fontsize":15}; _ylabel_kws.update(ylabel_kws)
-        _xticklabel_kws = {"fontsize":12, "rotation":xtick_rotation}; _xticklabel_kws.update(xticklabel_kws)
-        _yticklabel_kws = {"fontsize":12}; _yticklabel_kws.update(yticklabel_kws)
-        _legend_kws = {"fontsize":12}; _legend_kws.update(legend_kws)
-        if ax is None:
-            fig, ax = plt.subplots(figsize=figsize)
-        else:
-            fig = plt.gcf()
-        
-        feature_weights = feature_weights.dropna()
-        if ascending is not None:
-            feature_weights = feature_weights.sort_values(ascending=ascending)
-        feature_weights.plot(ax=ax, color=color, label=ylabel, kind="bar", **kwargs)
-        ax.axhline(0, color="black", linewidth=0.618)
-        
-        if ylim:
-            ax.set_ylim(ylim)
-        if show_xticks:
-            ax.set_xticklabels(ax.get_xticklabels(), **_xticklabel_kws)
-        else:
-            ax.set_xticklabels([], fontsize=12)
-            
-        ax.set_xlabel(xlabel, **_xlabel_kws)
-        ax.set_ylabel(ylabel, **_ylabel_kws)
-        ax.set_yticklabels(map(lambda x:"%0.2f"%x, ax.get_yticks()), **_yticklabel_kws)
-        if title:
-            ax.set_title(title, **_title_kws)
-        if show_legend:
-            ax.legend(**_legend_kws)
-        if show_xgrid:
-            ax.xaxis.grid(True)
-        if show_ygrid:
-            ax.yaxis.grid(True)
-        return fig, ax
-
-def plot_weights_box(
-    feature_weights:pd.DataFrame, 
-    title=None,
-    figsize=(13,3), 
-    color="white",
-    linecolor="coral",
-    swarmcolor="gray",
-    style="seaborn-white", 
-    ylim=None,
-    ax=None, 
-    alpha=0.382,
-    ascending=False, 
-    xlabel="Features", 
-    ylabel="$W$", 
-    xtick_rotation=90,
-    show_swarm=False,
-    show_xgrid=False,
-    show_ygrid=True,
-    show_xticks=True, 
-    show_legend=False,
-    xlabel_kws=dict(), 
-    ylabel_kws=dict(), 
-    xticklabel_kws=dict(), 
-    yticklabel_kws=dict(),
-    title_kws=dict(),
-    legend_kws=dict(),
-    **kwargs,
-    ):
-    with plt.style.context(style):
-        _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
-        _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
-        _ylabel_kws = {"fontsize":15}; _ylabel_kws.update(ylabel_kws)
-        _xticklabel_kws = {"fontsize":12, "rotation":xtick_rotation}; _xticklabel_kws.update(xticklabel_kws)
-        _yticklabel_kws = {"fontsize":12}; _yticklabel_kws.update(yticklabel_kws)
-        _legend_kws = {"fontsize":12}; _legend_kws.update(legend_kws)
-        _box_kws = dict( linewidth=1.0, boxprops={"facecolor": color}, medianprops={"color": linecolor})
-        _box_kws.update(kwargs)
-        if ax is None:
-            fig, ax = plt.subplots(figsize=figsize)
-        else:
-            fig = plt.gcf()
-        
-        feature_weights = feature_weights.dropna(how="all", axis=0)
-        if ascending is not None:
-            index = feature_weights.mean(axis=1).sort_values(ascending=ascending).index
-            feature_weights = feature_weights.loc[index]
-            
-        # feature_weights.T.plot(ax=ax, color=color, label=ylabel, kind="box")
-        
-        data = pd.melt(feature_weights.T, var_name="Feature", value_name="W")
-
-        sns.boxplot(data=data, x="Feature", y="W", ax=ax, **_box_kws)
-
-        if show_swarm:
-            sns.swarmplot(data=data, x="Feature", y="W", ax=ax, color=swarmcolor, alpha=alpha)
-        
-
-        if ylim:
-            ax.set_ylim(ylim)
-        if show_xticks:
-            ax.set_xticklabels(ax.get_xticklabels(), **_xticklabel_kws)
-        else:
-            ax.set_xticklabels([], fontsize=12)
-            
-        ax.set_xlabel(xlabel, **_xlabel_kws)
-        ax.set_ylabel(ylabel, **_ylabel_kws)
-        ax.set_yticklabels(map(lambda x:"%0.2f"%x, ax.get_yticks()), **_yticklabel_kws)
-        if title:
-            ax.set_title(title, **_title_kws)
-        if show_legend:
-            ax.legend(**_legend_kws)
-        if show_xgrid:
-            ax.xaxis.grid(True)
-        if show_ygrid:
-            ax.yaxis.grid(True)
-        return fig, ax
-
-def plot_recursive_feature_selection(
-    number_of_features:pd.Series, 
-    average_scores:pd.Series, 
-    # sem:pd.Series=None, 
-    # Testing_scores:pd.Series=None,
-    min_features:int=None,
-    max_features:int=None,
-    min_score:float=None,
-    max_score:float=None,
-    ax=None,
-    color="darkslategray",
-    color_testing="red",
-    linewidth=0.618,
-    alpha=0.618,
-    edgecolor="black", 
-    style="seaborn-white",
-    figsize=(8,3),
-    title=None,
-    xlabel="$N_{Features}$",
-    ylabel="Score",
-    xtick_rotation=0,
-    show_xgrid=False,
-    show_ygrid=True,
-    show_xticks=True, 
-    show_legend=False,
-    xlabel_kws=dict(), 
-    ylabel_kws=dict(), 
-    xticklabel_kws=dict(), 
-    yticklabel_kws=dict(),
-    title_kws=dict(),
-    legend_kws=dict(),
-    **kwargs,
-    ):
-
-    assert isinstance(number_of_features, pd.Series)
-    assert isinstance(average_scores, pd.Series)
-    assert np.all(number_of_features.index == average_scores.index)
-    df = pd.DataFrame([number_of_features, average_scores], index=["number_of_features", "average_scores"]).T
-    # if sem is not None:
-    #     assert isinstance(sem, pd.Series)
-    #     assert np.all(df.index == sem.index)
-    #     df["sem"] = sem
-    
-    if min_features:
-        df = df.query("number_of_features >= {}".format(min_features))
-    if max_features:
-        df = df.query("number_of_features <= {}".format(max_features))
-    if min_score:
-        df = df.query("average_scores >= {}".format(min_score))
-    if max_score:
-        df = df.query("average_scores <= {}".format(max_score))
-        
-    with plt.style.context(style):
-        _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
-        _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
-        _ylabel_kws = {"fontsize":15}; _ylabel_kws.update(ylabel_kws)
-        _xticklabel_kws = {"fontsize":12, "rotation":xtick_rotation}; _xticklabel_kws.update(xticklabel_kws)
-        _yticklabel_kws = {"fontsize":12}; _yticklabel_kws.update(yticklabel_kws)
-        _legend_kws = {"fontsize":12}; _legend_kws.update(legend_kws)
-        if ax is None:
-            fig, ax = plt.subplots(figsize=figsize)
-        else:
-            fig = plt.gcf()
-
-        # if sem is not None:
-        #     ax.errorbar(df["number_of_features"].values, df["average_scores"].values, yerr=df["sem"].values, alpha=0.1618, color=color)
-        ax.scatter(x=df["number_of_features"].values, y=df["average_scores"].values, edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color, **kwargs)
-
-        ax.set_xlabel(xlabel, **_xlabel_kws)
-        ax.set_ylabel(ylabel, **_ylabel_kws)
-        # ax.set_yticklabels(map(lambda x:"%0.2f"%x, ax.get_yticks()), **_yticklabel_kws)
-        if title:
-            ax.set_title(title, **_title_kws)
-        if show_legend:
-            ax.legend(**_legend_kws)
-        if show_xgrid:
-            ax.xaxis.grid(True)
-        if show_ygrid:
-            ax.yaxis.grid(True)
-        return fig, ax
-    
-def plot_scores_comparison(
-    number_of_features:pd.Series, 
-    average_scores:pd.Series, 
-    testing_scores:pd.Series=None,
-    min_features:int=None,
-    max_features:int=None,
-    min_score:float=None,
-    max_score:float=None,
-    ax=None,
-    color="darkslategray",
-    linewidth=0.618,
-    alpha=0.618,
-    edgecolor="black", 
-    style="seaborn-white",
-    figsize=(8,5),
-    title=None,
-    xlabel="Average Score",
-    ylabel="Testing Score",
-
-    feature_to_size_function = "auto",
-
-    xtick_rotation=0,
-    show_xgrid=True,
-    show_ygrid=True,
-    # show_zgrid=True,
-
-    show_xticks=True, 
-    show_legend=True,
-    legend_markers=["min", "25%", "50%", "75%", "max"],
-    xlabel_kws=dict(), 
-    ylabel_kws=dict(), 
-    # zlabel_kws=dict(), 
-
-    xticklabel_kws=dict(), 
-    yticklabel_kws=dict(),
-    # zticklabel_kws=dict(),
-
-    title_kws=dict(),
-    legend_kws=dict(),
-    **kwargs,
-    ):
-
-    assert isinstance(number_of_features, pd.Series)
-    assert isinstance(average_scores, pd.Series)
-    assert isinstance(testing_scores, pd.Series)
-    assert set(legend_markers) <= set(["min", "25%", "50%", "75%", "max"]), 'legend_markers must be a subset of ["min", "25%", "50%", "75%", "max"]'
-    legend_markers = sorted(legend_markers, key=lambda x:["min", "25%", "50%", "75%", "max"].index(x))
-
-    assert np.all(number_of_features.index == average_scores.index)
-    assert np.all(number_of_features.index == testing_scores.index)
-
-    df = pd.DataFrame([number_of_features, average_scores, testing_scores], index=["number_of_features", "average_scores", "testing_scores"]).T
-
-    if min_features:
-        df = df.query("number_of_features >= {}".format(min_features))
-    if max_features:
-        df = df.query("number_of_features <= {}".format(max_features))
-    if min_score:
-        df = df.query("average_scores >= {}".format(min_score))
-    if max_score:
-        df = df.query("average_scores <= {}".format(max_score))
-    if min_score:
-        df = df.query("testing_scores >= {}".format(min_score))
-    if max_score:
-        df = df.query("testing_scores <= {}".format(max_score))
-
-    if feature_to_size_function == "auto":
-        def feature_to_size_function(n):
-            return 100/n
-    assert hasattr(feature_to_size_function, "__call__")
-    marker_sizes = feature_to_size_function(number_of_features)
-
-    with plt.style.context(style):
-        _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
-        _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
-        _ylabel_kws = {"fontsize":15}; _ylabel_kws.update(ylabel_kws)
-        # _zlabel_kws = {"fontsize":15}; _zlabel_kws.update(zlabel_kws)
-
-        _xticklabel_kws = {"fontsize":12, "rotation":xtick_rotation}; _xticklabel_kws.update(xticklabel_kws)
-        _yticklabel_kws = {"fontsize":12}; _yticklabel_kws.update(yticklabel_kws)
-        # _zticklabel_kws = {"fontsize":12}; _zticklabel_kws.update(zticklabel_kws)
-
-        _legend_kws = {"fontsize":12, "frameon":True, "title_fontsize":"x-large"}; _legend_kws.update(legend_kws)
-        if ax is None:
-            fig, ax = plt.subplots(figsize=figsize)
-
-        else:
-            fig = plt.gcf()
-
-
-        # ax.scatter(xs=df["number_of_features"].values, ys=df["average_scores"].values, zs=df["testing_scores"], edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color, **kwargs)
-        ax.scatter(x=df["average_scores"].values, y=df["testing_scores"], s=marker_sizes, edgecolor=edgecolor, alpha=alpha, linewidth=linewidth, color=color, **kwargs)
-
-
-        ax.set_xlabel(xlabel, **_xlabel_kws)
-        ax.set_ylabel(ylabel, **_ylabel_kws)
-        # ax.set_zlabel(zlabel, **_zlabel_kws)
-
-        # ax.set_yticklabels(map(lambda x:"%0.2f"%x, ax.get_yticks()), **_yticklabel_kws)
-        if title:
-            ax.set_title(title, **_title_kws)
-        if show_legend:
-            legendary_features = number_of_features.describe()[legend_markers].astype(int)
-            
-            legend_elements = list()
-            for i,n in legendary_features.items():
-                # marker = plt.Line2D([], [], color=color, marker='o', linestyle='None', markersize=feature_to_size_function(n), label="$N$ = %d"%(n))
-                # legend_elements.append(marker)
-                i = i.replace("%","\%")
-                legend_marker = ax.scatter([], [], s=feature_to_size_function(n), label="$N_{%s}$ = %d"%(i,n), color=color, marker='o')
-                legend_elements.append(legend_marker)
-
-
-            legend = ax.legend(handles=legend_elements,  title="$N_{Features}$",  markerscale=1, **_legend_kws)
-            
-        if show_xgrid:
-            ax.xaxis.grid(True)
-        if show_ygrid:
-            ax.yaxis.grid(True)
-        # if show_zgrid:
-        #     ax.zaxis.grid(True)
-        return fig, ax
-
 # -------
 # Classes
 # -------
-class ClairvoyanceBase(object):
+class LegacyClairvoyanceBase(object):
     def __init__(
         self,
         # Modeling
         estimator,
-        param_grid:dict,
+        param_space:dict,
         scorer,
         method:str="asymmetric", #imbalanced?
         importance_getter="auto",
@@ -1119,8 +860,8 @@ class ClairvoyanceBase(object):
                     print("Updating `random_state=None` in `estimator` to `random_state={}`".format(random_state), file=log)
                 self.estimator.set_params(random_state=random_state)
         self.feature_weight_attribute = get_feature_importance_attribute(estimator, importance_getter)
-        assert len(param_grid) > 0, "`param_grid` must have at least 1 key:[value_1, value_2, ..., value_n] pair"
-        self.param_grid = param_grid
+        assert len(param_space) > 0, "`param_space` must have at least 1 key:[value_1, value_2, ..., value_n] pair"
+        self.param_space = param_space
             
         # Set attributes
         self.name = name
@@ -1163,7 +904,7 @@ class ClairvoyanceBase(object):
             header,
             pad*" " + "* Estimator: {}".format(self.estimator_name),
             pad*" " + "* Estimator Type: {}".format(self.estimator_type),
-            pad*" " + "* Parameter Space: {}".format(self.param_grid),
+            pad*" " + "* Parameter Space: {}".format(self.param_space),
             pad*" " + "* Scorer: {}".format(self.scorer_name),
             pad*" " + "* Method: {}".format(self.method),
             pad*" " + "* Feature Weight Attribute: {}".format(self.feature_weight_attribute),
@@ -1216,8 +957,8 @@ class ClairvoyanceBase(object):
             # Indexing for hyperparameters and models
             estimators_ = OrderedDict()
 
-            param_grid_expanded = list(map(lambda x:dict(zip(self.param_grid.keys(), x)), itertools.product(*self.param_grid.values())))
-            for i, params in enumerate(param_grid_expanded):
+            param_space_expanded = list(map(lambda x:dict(zip(self.param_space.keys(), x)), itertools.product(*self.param_space.values())))
+            for i, params in enumerate(param_space_expanded):
                 # Construct model
                 estimator = clone(self.estimator)
                 estimator.set_params(**params)
@@ -1386,7 +1127,7 @@ class ClairvoyanceBase(object):
             assert isinstance(ascending, list), "`sort_hyperparameters_by` must be a list of size n accompanied by an `ascending` list of n boolean vaues"
             assert len(sort_hyperparameters_by) == len(ascending), "`sort_hyperparameters_by` must be a list of size n accompanied by an `ascending` list of n boolean vaues"
             assert all(map(lambda x: isinstance(x, bool), ascending)), "`sort_hyperparameters_by` must be a list of size n accompanied by an `ascending` list of n boolean vaues"
-            assert set(sort_hyperparameters_by) <= set(self.param_grid.keys()), "`sort_hyperparameters_by` must contain a list of keys in `param_grid`"
+            assert set(sort_hyperparameters_by) <= set(self.param_space.keys()), "`sort_hyperparameters_by` must contain a list of keys in `param_space`"
         else:
             sort_hyperparameters_by = []
             ascending = []
@@ -1405,7 +1146,9 @@ class ClairvoyanceBase(object):
         df = df.sort_values(["average_score"] + sort_hyperparameters_by, ascending=[False] + ascending)
         
         self.best_estimator_ = clone(self.estimator)
-        self.best_estimator_.set_params(**dict(df.index[0]))
+
+        if not df.empty:
+            self.best_estimator_.set_params(**dict(df.index[0]))
         self.best_hyperparameters_ = self.best_estimator_.get_params(deep=True)
         self.hyperparameter_average_scores_ = df
         
@@ -1451,7 +1194,7 @@ class ClairvoyanceBase(object):
         return df.squeeze()
     
     
-    def recursive_feature_inclusion(
+    def recursive_feature_addition(
         self, 
         estimator=None, 
         X:pd.DataFrame=None, 
@@ -1512,7 +1255,7 @@ class ClairvoyanceBase(object):
 
 
         # Recursive feature incusion
-        rci_results = recursive_feature_inclusion(
+        rci_results = recursive_feature_addition(
             estimator=estimator, 
             X=X, 
             y=y, 
@@ -1561,17 +1304,28 @@ class ClairvoyanceBase(object):
         self.best_estimator_rci_ = clone(estimator)
         self.best_estimator_testing_score_ = rci_results["best_estimator_testing_score"]
 
-        X_rci = transform(X=X.loc[:,self.best_features_], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
-        with warnings.catch_warnings(): #!
-            warnings.filterwarnings("ignore", category=ConvergenceWarning)
-            self.best_estimator_rci_.fit(X_rci, y)
+        self.status_ok_ = False
+        if isinstance(self.best_features_, list):
+            if np.all(pd.notnull(self.best_features_)):
+                self.status_ok_ = True
+
+        if self.status_ok_:
+            X_rci = transform(X=X.loc[:,self.best_features_], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
+            with warnings.catch_warnings(): #!
+                warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                self.best_estimator_rci_.fit(X_rci, y)
+            self.rci_feature_weights_ = rci_results["feature_weights"][("full_dataset", "rci_weights")].loc[self.best_features_]
+        else:
+            self.rci_feature_weights_ = np.nan
         self.feature_weights_ =  rci_results["feature_weights"]
-        self.rci_feature_weights_ = rci_results["feature_weights"][("full_dataset", "rci_weights")].loc[self.best_features_]
         self.cv_splits_ = rci_results["cv_splits"]
         self.cv_labels_ = rci_results["cv_labels"]
         
         if copy_X_rci:
-            self.X_rci_ = X_rci.copy()
+            if self.status_ok_:
+                self.X_rci_ = X_rci.copy()
+            else:
+                self.X_rci_ = np.nan
             
         self.is_fitted_rci = True
         
@@ -1597,7 +1351,7 @@ class ClairvoyanceBase(object):
         if ylabel == "auto":
             ylabel = self.scorer_name
         kwargs["ylabel"] = ylabel
-        assert self.is_fitted_rci, "Please run `recursive_feature_inclusion` before proceeding."
+        assert self.is_fitted_rci, "Please run `recursive_feature_addition` before proceeding."
         if self.best_score_ < self.highest_score_:
             vertical_lines = [len(self.best_features_)-1, len(self.highest_scoring_features_)-1]
         else:
@@ -1613,7 +1367,7 @@ class ClairvoyanceBase(object):
         weight_type=("full_dataset","rci_weights"),
         **kwargs,
         ):
-        assert self.is_fitted_rci, "Please run `recursive_feature_inclusion` before proceeding."
+        assert self.is_fitted_rci, "Please run `recursive_feature_addition` before proceeding."
         assert_acceptable_arguments(weight_type, {("full_dataset","rci_weights"), ("full_dataset","clairvoyance_weights"), "cross_validation"})
         
         if weight_type in {("full_dataset","rci_weights"), ("full_dataset","clairvoyance_weights")}:
@@ -1626,8 +1380,8 @@ class ClairvoyanceBase(object):
         self,
         **kwargs,
         ):
-        assert self.is_fitted_rci, "Please run `recursive_feature_inclusion` before proceeding."
-        assert self.testing_set_provided, "Please run `recursive_feature_inclusion` with a testing set before proceeding."
+        assert self.is_fitted_rci, "Please run `recursive_feature_addition` before proceeding."
+        assert self.testing_set_provided, "Please run `recursive_feature_addition` with a testing set before proceeding."
         return plot_scores_comparison(number_of_features=self.history_[("summary", "number_of_features")], average_scores=self.history_[("summary", "average_score")],   testing_scores=self.history_[("summary", "testing_score")], **kwargs)
 
     def copy(self):
@@ -1642,12 +1396,12 @@ class ClairvoyanceBase(object):
     #     return cls
         
         
-class ClairvoyanceClassification(ClairvoyanceBase):
+class LegacyClairvoyanceClassification(LegacyClairvoyanceBase):
     def __init__(
         self,
         # Modeling
         estimator,
-        param_grid:dict,
+        param_space:dict,
         scorer="accuracy",
         method="asymmetric",
         importance_getter="auto",
@@ -1679,9 +1433,9 @@ class ClairvoyanceClassification(ClairvoyanceBase):
             scorer = get_scorer(scorer)
             
         
-        super(ClairvoyanceClassification, self).__init__(
+        super(LegacyClairvoyanceClassification, self).__init__(
             estimator=estimator,
-            param_grid=param_grid,
+            param_space=param_space,
             scorer=scorer,
             method=method,
             importance_getter=importance_getter,
@@ -1708,13 +1462,13 @@ class ClairvoyanceClassification(ClairvoyanceBase):
             log=log,
         )
 
-class ClairvoyanceRegression(ClairvoyanceBase):
+class LegacyClairvoyanceRegression(LegacyClairvoyanceBase):
 
     def __init__(
         self,
         # Modeling
         estimator,
-        param_grid:dict,
+        param_space:dict,
         scorer="neg_root_mean_squared_error",
         method="asymmetric",
         importance_getter="auto",
@@ -1743,9 +1497,9 @@ class ClairvoyanceRegression(ClairvoyanceBase):
          ): 
 
             
-        super(ClairvoyanceRegression, self).__init__(
+        super(LegacyClairvoyanceRegression, self).__init__(
             estimator=estimator,
-            param_grid=param_grid,
+            param_space=param_space,
             scorer=scorer,
             method=method,
             importance_getter=importance_getter,
@@ -1774,12 +1528,12 @@ class ClairvoyanceRegression(ClairvoyanceBase):
         
         )
 
-class ClairvoyanceRecursive(object):
+class LegacyClairvoyanceRecursive(object):
     def __init__(
         self,
         # Modeling
         estimator,
-        param_grid:dict,
+        param_space:dict,
         scorer,
         method="asymmetric",
         importance_getter="auto",
@@ -1826,10 +1580,10 @@ class ClairvoyanceRecursive(object):
         self.estimator_name = estimator.__class__.__name__
         if is_classifier(estimator):
             self.estimator_type = "classifier"
-            self.clairvoyance_class = ClairvoyanceClassification
+            self.clairvoyance_class = LegacyClairvoyanceClassification
         if is_regressor(estimator):
             self.estimator_type = "regressor"
-            self.clairvoyance_class = ClairvoyanceRegression
+            self.clairvoyance_class = LegacyClairvoyanceRegression
 
         self.estimator = clone(estimator)
         
@@ -1840,8 +1594,8 @@ class ClairvoyanceRecursive(object):
                     print("Updating `random_state=None` in `estimator` to `random_state={}`".format(random_state), file=log)
                 self.estimator.set_params(random_state=random_state)
         self.feature_weight_attribute = get_feature_importance_attribute(estimator, importance_getter)
-        assert len(param_grid) > 0, "`param_grid` must have at least 1 key:[value_1, value_2, ..., value_n] pair"
-        self.param_grid = param_grid
+        assert len(param_space) > 0, "`param_space` must have at least 1 key:[value_1, value_2, ..., value_n] pair"
+        self.param_space = param_space
             
         # Transformations
         assert_acceptable_arguments(transformation, {None,"clr","closure"})
@@ -1900,7 +1654,7 @@ class ClairvoyanceRecursive(object):
             header,
             pad*" " + "* Estimator: {}".format(self.estimator_name),
             pad*" " + "* Estimator Type: {}".format(self.estimator_type),
-            pad*" " + "* Parameter Space: {}".format(self.param_grid),
+            pad*" " + "* Parameter Space: {}".format(self.param_space),
             pad*" " + "* Scorer: {}".format(self.scorer_name),
             pad*" " + "* Method: {}".format(self.method),
             pad*" " + "* Feature Weight Attribute: {}".format(self.feature_weight_attribute),
@@ -1991,6 +1745,7 @@ class ClairvoyanceRecursive(object):
         self.history_ = OrderedDict()
         self.results_ = OrderedDict()
         self.results_baseline_ = OrderedDict()
+        self.status_ok_ = True
 
         with np.errstate(divide='ignore', invalid='ignore'):
             current_features_for_percentile = X.columns
@@ -2003,7 +1758,7 @@ class ClairvoyanceRecursive(object):
                     # Initiate model
                     model = self.clairvoyance_class(
                         estimator=self.estimator,
-                        param_grid=self.param_grid,
+                        param_space=self.param_space,
                         scorer=self.scorer,
                         method=self.method,
                         importance_getter=self.feature_weight_attribute,
@@ -2056,113 +1811,142 @@ class ClairvoyanceRecursive(object):
                     X_query = transform(X=self.X_initial_.loc[:,current_features_for_percentile], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
                     for params, estimator in model.estimators_.items(): 
 
+
                         if self.verbose > 2:
                             print("[Start] recursive feature inclusion [percentile={}, estimator_params={}]".format(pctl, params), file=self.log)
 
-                        # Baseline
-                        self._debug = dict(X=X_query, y=self.y_, scoring=self.scorer, cv=self.cv_splits_, n_jobs=self.n_jobs) #?
+                        if not np.all(X_query == 0):
+                            # Baseline
+                            self._debug = dict(X=X_query, y=self.y_, scoring=self.scorer, cv=self.cv_splits_, n_jobs=self.n_jobs) #?
 
-                        baseline_scores_for_percentile = cross_val_score(estimator=estimator, X=X_query, y=self.y_, scoring=self.scorer, cv=self.cv_splits_, n_jobs=self.n_jobs)
+                            baseline_scores_for_percentile = cross_val_score(estimator=estimator, X=X_query, y=self.y_, scoring=self.scorer, cv=self.cv_splits_, n_jobs=self.n_jobs)
 
-                        # break #?
-                        if self.verbose > 3:
-                            print("[Completed] Baseline cross-validation for training set [percentile={}, estimator_params={}]".format(pctl, params), file=self.log)
-                        with warnings.catch_warnings():
-                            warnings.filterwarnings("ignore", category=ConvergenceWarning)
-                            baseline_rci_weights = getattr(estimator.fit(X_query, self.y_), self.feature_weight_attribute)
-                        if np.all(baseline_rci_weights == 0):
-                            if self.verbose > 2:
-                                print("Excluding results from [percentile={}, estimator_params={}] becaue baseline model could not be fit with parameter set".format(pctl, params), file=self.log)
-                        else:
-
-                            baseline_testing_score = np.nan
-                            if self.testing_set_provided:
-                                # Transform features (if transformation = None, then there is no transformation)
-                                X_testing_query = transform(X=X_testing.loc[:,current_features_for_percentile], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
-                                baseline_testing_score = self.scorer(estimator=estimator, X=X_testing_query, y_true=y_testing)
-                                if self.verbose > 3:
-                                    print("[Completed] Baseline cross-validation for testing set [percentile={}, estimator_params={}]".format(pctl, params), file=self.log)
-                            baseline_rci_weights = format_weights(baseline_rci_weights)
-                            self.results_baseline_[(pctl,"baseline", params)] = {
-                                "testing_score":baseline_testing_score,
-                                "average_score":np.nanmean(baseline_scores_for_percentile), 
-                                "sem":stats.sem(baseline_scores_for_percentile),
-                                "number_of_features":X_query.shape[1], 
-                                "features":X_query.columns.tolist(), 
-                                "clairvoyance_weights":np.nan,
-                                "rci_weights":baseline_rci_weights, 
-                                "estimator":estimator,
-                            }
-
-                            # Minimum score thresholds
-                            for s in sorted(feature_ordering_from_minimum_scores):
-                                progress_message = {True:"Recursive feature inclusion [percentile={}, estimator_params={}, minimum_score={}]".format(pctl, params, s), False:None}[self.verbose > 1]
-                                rci_params =  dict(
-                                        estimator=estimator, 
-                                        X=self.X_initial_.loc[:,current_features_for_percentile], 
-                                        y=self.y_, 
-                                        cv=self.cv_splits_, 
-                                        minimum_score=s, 
-                                        metric=np.nanmean, 
-                                        early_stopping=self.early_stopping, 
-                                        minimum_improvement_in_score=self.minimum_improvement_in_score, 
-                                        additional_feature_penalty=self.additional_feature_penalty,
-                                        maximum_number_of_features=self.maximum_number_of_features,
-                                        target_score=-np.inf, 
-                                        less_features_is_better=less_features_is_better, 
-                                        progress_message=progress_message,
-                                )
-                                if self.testing_set_provided:
-                                    rci_params.update(
-                                        dict(
-                                        X_testing=X_testing.loc[:,current_features_for_percentile],
-                                        y_testing=y_testing,
-                                        )
-                                    )
-
-                                rci_history = model.recursive_feature_inclusion(**rci_params)
-
-
-
-                                #!
-                                # Update weights if applicable
-                                if model.best_score_ > best_score_for_percentile:
-                                    best_score_for_percentile = model.best_score_
-                                    best_hyperparameters_for_percentile = params
-                                    best_minimum_score_for_percentile = s
-                                    best_clairvoyance_feature_weights_for_percentile = model.clairvoyance_feature_weights_.copy()
-
-                                # Store results
-                                rci_feature_weights = model.rci_feature_weights_[model.best_features_]
-                                if not np.any(rci_feature_weights.isnull()) and np.any(rci_feature_weights > 0):
-                                    self.results_[(pctl, params, s)] = {
-                                        "testing_score":model.best_estimator_testing_score_,
-                                        "average_score":model.best_score_, 
-                                        "sem":model.best_estimator_sem_,
-                                        "number_of_features":len(model.best_features_), 
-                                        "features":list(model.best_features_), 
-                                        "clairvoyance_weights":model.clairvoyance_feature_weights_[model.best_features_].values.tolist(),
-                                        "rci_weights":rci_feature_weights.values.tolist(), 
-                                        "estimator":estimator,
-                                    }
-                                else:
-                                    if self.verbose > 2:
-                                        print("Excluding results from [percentile={}, estimator_params={}, minimum_score={}] becaue model could not be fit with parameter set".format(pctl, params, s), file=self.log)
-                                self.history_[(pctl,params, s)] = rci_history
-
+                            # break #?
+                            if self.verbose > 3:
+                                print("[Completed] Baseline cross-validation for training set [percentile={}, estimator_params={}]".format(pctl, params), file=self.log)
+                            with warnings.catch_warnings():
+                                warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                                baseline_rci_weights = getattr(estimator.fit(X_query, self.y_), self.feature_weight_attribute)
+                            if np.all(baseline_rci_weights == 0):
                                 if self.verbose > 2:
-                                    print("[End] recursive feature inclusion [percentile={}, estimator_params={}]".format(pctl, params), file=self.log)
+                                    print("Excluding results from [percentile={}, estimator_params={}] becaue baseline model could not be fit with parameter set".format(pctl, params), file=self.log)
+                            else:
 
-                                # Reset estimator
-                                model.estimators_[params] = clone(estimator)
+                                baseline_testing_score = np.nan
+                                if self.testing_set_provided:
+                                    # Transform features (if transformation = None, then there is no transformation)
+                                    X_testing_query = transform(X=X_testing.loc[:,current_features_for_percentile], method=self.transformation, multiplicative_replacement=self.multiplicative_replacement, axis=1)
+                                    baseline_testing_score = self.scorer(estimator=estimator, X=X_testing_query, y_true=y_testing)
+                                    if self.verbose > 3:
+                                        print("[Completed] Baseline cross-validation for testing set [percentile={}, estimator_params={}]".format(pctl, params), file=self.log)
+                                baseline_rci_weights = format_weights(baseline_rci_weights)
+                                self.results_baseline_[(pctl,"baseline", params)] = {
+                                    "testing_score":baseline_testing_score,
+                                    "average_score":np.nanmean(baseline_scores_for_percentile), 
+                                    "sem":stats.sem(baseline_scores_for_percentile),
+                                    "number_of_features":X_query.shape[1], 
+                                    "features":X_query.columns.tolist(), 
+                                    "clairvoyance_weights":np.nan,
+                                    "rci_weights":baseline_rci_weights, 
+                                    "estimator":estimator,
+                                }
+
+                                # Minimum score thresholds
+                                for s in sorted(feature_ordering_from_minimum_scores):
+                                    progress_message = {True:"Recursive feature inclusion [percentile={}, estimator_params={}, minimum_score={}]".format(pctl, params, s), False:None}[self.verbose > 1]
+                                    rci_params =  dict(
+                                            estimator=estimator, 
+                                            X=self.X_initial_.loc[:,current_features_for_percentile], 
+                                            y=self.y_, 
+                                            cv=self.cv_splits_, 
+                                            minimum_score=s, 
+                                            metric=np.nanmean, 
+                                            early_stopping=self.early_stopping, 
+                                            minimum_improvement_in_score=self.minimum_improvement_in_score, 
+                                            additional_feature_penalty=self.additional_feature_penalty,
+                                            maximum_number_of_features=self.maximum_number_of_features,
+                                            target_score=-np.inf, 
+                                            less_features_is_better=less_features_is_better, 
+                                            progress_message=progress_message,
+                                    )
+                                    if self.testing_set_provided:
+                                        rci_params.update(
+                                            dict(
+                                            X_testing=X_testing.loc[:,current_features_for_percentile],
+                                            y_testing=y_testing,
+                                            )
+                                        )
+
+                                    rci_history = model.recursive_feature_addition(**rci_params)
+
+
+                                     
+                                    # Update feature weights
+                                    # if not np.all(pd.isnull(model.rci_feature_weights_)):
+                                    feature_weights_ok = model.status_ok_
+                                    #!
+                                    # Update weights if applicable
+                                    # if pd.notnull(model.best_score_):
+                                    model_score_ok = pd.notnull(model.best_score_)
+
+                                    if all([feature_weights_ok, model_score_ok]):
+                                        rci_feature_weights = model.rci_feature_weights_[model.best_features_]
+
+                                        if model.best_score_ > best_score_for_percentile:
+                                            best_score_for_percentile = model.best_score_
+                                            best_hyperparameters_for_percentile = params
+                                            best_minimum_score_for_percentile = s
+                                            best_clairvoyance_feature_weights_for_percentile = model.clairvoyance_feature_weights_.copy()
+
+
+
+                                        if np.any(rci_feature_weights > 0):
+                                            self.results_[(pctl, params, s)] = {
+                                                "testing_score":model.best_estimator_testing_score_,
+                                                "average_score":model.best_score_, 
+                                                "sem":model.best_estimator_sem_,
+                                                "number_of_features":len(model.best_features_), 
+                                                "features":list(model.best_features_), 
+                                                "clairvoyance_weights":model.clairvoyance_feature_weights_[model.best_features_].values.tolist(),
+                                                "rci_weights":rci_feature_weights.values.tolist(), 
+                                                "estimator":estimator,
+                                            }
+                                        else:
+                                            if self.verbose > 2:
+                                                print("Excluding results from [percentile={}, estimator_params={}, minimum_score={}] because model could not be fit with parameter set".format(pctl, params, s), file=self.log)
+                                        self.history_[(pctl,params, s)] = rci_history
+
+                                        if self.verbose > 2:
+                                            print("[End] recursive feature inclusion [percentile={}, estimator_params={}]".format(pctl, params), file=self.log)
+
+                                        # Reset estimator
+                                        model.estimators_[params] = clone(estimator)
+                                    else:
+                                        if self.verbose > 1:
+                                            print("Excluding results from [percentile={}, estimator_params={}, minimum_score={}] failed the following checks:\n * feature_weights_ok = {}\n * model_score_ok = {}".format(pctl, params, s, feature_weights_ok, model_score_ok), file=self.log)
+
 
                     # Get new features
                     if i < len(self.percentiles) - 1:
-                        if self.remove_zero_weighted_features: #! Used to be exclude_zero_weighted_features which had a separate functionality from removing zero weighted features in the models.  Keep eye on this
-                            nonzero_weights = best_clairvoyance_feature_weights_for_percentile[lambda x: x > 0]
-                            current_features_for_percentile = best_clairvoyance_feature_weights_for_percentile[lambda w: w >= np.percentile(nonzero_weights, q=100*self.percentiles[i+1])].sort_values(ascending=False).index
+                        if np.all(pd.isnull(best_clairvoyance_feature_weights_for_percentile)):
+                            if self.verbose > 0:
+                                print("Terminating algorithm. All weights returned as NaN.", file=self.log)
+                            self.status_ok_ = False
+                            break
                         else:
-                            current_features_for_percentile = best_clairvoyance_feature_weights_for_percentile[lambda w: w >= np.percentile(best_clairvoyance_feature_weights_for_percentile, q=100*self.percentiles[i+1])].sort_values(ascending=False).index
+                            if self.remove_zero_weighted_features: #! Used to be exclude_zero_weighted_features which had a separate functionality from removing zero weighted features in the models.  Keep eye on this
+                                nonzero_weights = best_clairvoyance_feature_weights_for_percentile[lambda x: x > 0]
+                                self._debug2 = {
+                                    "model":model,
+                                    "best_score_for_percentile":best_score_for_percentile,
+                                    "best_hyperparameters_for_percentile":best_hyperparameters_for_percentile,
+                                    "best_minimum_score_for_percentile":best_minimum_score_for_percentile,
+                                    "best_clairvoyance_feature_weights_for_percentile":best_clairvoyance_feature_weights_for_percentile,
+                                }
+                                
+                                current_features_for_percentile = best_clairvoyance_feature_weights_for_percentile[lambda w: w >= np.percentile(nonzero_weights, q=100*self.percentiles[i+1])].sort_values(ascending=False).index
+                            else:
+                                current_features_for_percentile = best_clairvoyance_feature_weights_for_percentile[lambda w: w >= np.percentile(best_clairvoyance_feature_weights_for_percentile, q=100*self.percentiles[i+1])].sort_values(ascending=False).index
                     else:
                         if self.verbose > 0:
                             print("Terminating algorithm. Last percentile has been processed.", file=self.log)
@@ -2171,32 +1955,38 @@ class ClairvoyanceRecursive(object):
                         print("Terminating algorithm. Only 1 feature remains.", file=self.log)
                     break
 
-            self.results_ = pd.DataFrame(self.results_).T.sort_values(["testing_score", "average_score", "number_of_features", "sem"], ascending=[False, False,less_features_is_better, True])
-            self.results_.index.names = ["percentile", "hyperparameters", "minimum_score"]
+            self.results_ = pd.DataFrame(self.results_).T
 
-            self.results_ = self.results_.loc[:,["testing_score", "average_score", "sem", "number_of_features", "features", "clairvoyance_weights", "rci_weights", "estimator"]]
+            if self.status_ok_:
+                self.results_ = self.results_.sort_values(["testing_score", "average_score", "number_of_features", "sem"], ascending=[False, False,less_features_is_better, True])
+                self.results_.index.names = ["percentile", "hyperparameters", "minimum_score"]
 
-            # Dtypes
-            for field in ["testing_score", "average_score", "sem"]:
-                self.results_[field] = self.results_[field].astype(float)
-            for field in ["number_of_features"]:
-                self.results_[field] = self.results_[field].astype(int)
+                self.results_ = self.results_.loc[:,["testing_score", "average_score", "sem", "number_of_features", "features", "clairvoyance_weights", "rci_weights", "estimator"]]
 
-            # Remove redundancy
-            if remove_redundancy:
-                unique_results = set()
-                unique_index = list()
-                for idx, row in pv(self.results_.iterrows(), "Removing duplicate results", total=self.results_.shape[0]):
-                    id_unique = frozenset([row["average_score"], row["sem"], tuple(row["features"])])
-                    if id_unique not in unique_results:
-                        unique_results.add(id_unique)
-                        unique_index.append(idx)
-                    else:
-                        if self.verbose > 2:
-                            print("Removing duplicate result: {}".format(id_unique), file=self.log)
-                self.results_ = self.results_.loc[unique_index]
-            self.results_baseline_ = pd.DataFrame(self.results_baseline_).T
-            self.results_baseline_.index.names = ["percentile", "hyperparameters", "minimum_score"]
+                # Dtypes
+                for field in ["testing_score", "average_score", "sem"]:
+                    self.results_[field] = self.results_[field].astype(float)
+                for field in ["number_of_features"]:
+                    self.results_[field] = self.results_[field].astype(int)
+
+                # Remove redundancy
+                if remove_redundancy:
+                    unique_results = set()
+                    unique_index = list()
+                    for idx, row in pv(self.results_.iterrows(), "Removing duplicate results", total=self.results_.shape[0]):
+                        id_unique = frozenset([row["average_score"], row["sem"], tuple(row["features"])])
+                        if id_unique not in unique_results:
+                            unique_results.add(id_unique)
+                            unique_index.append(idx)
+                        else:
+                            if self.verbose > 2:
+                                print("Removing duplicate result: {}".format(id_unique), file=self.log)
+                    self.results_ = self.results_.loc[unique_index]
+                self.results_baseline_ = pd.DataFrame(self.results_baseline_).T
+                self.results_baseline_.index.names = ["percentile", "hyperparameters", "minimum_score"]
+            else:
+                if self.verbose > 0:
+                    print("All models failed for parameter set and data input", file=self.log)
 
             self.is_fitted_rci = True
             return self
@@ -2258,8 +2048,8 @@ class ClairvoyanceRecursive(object):
         self,
         **kwargs,
         ):
-        assert self.is_fitted_rci, "Please run `recursive_feature_inclusion` before proceeding."
-        assert self.testing_set_provided, "Please run `recursive_feature_inclusion` with a testing set before proceeding."
+        assert self.is_fitted_rci, "Please run `recursive_feature_addition` before proceeding."
+        assert self.testing_set_provided, "Please run `recursive_feature_addition` with a testing set before proceeding."
         df = self.get_history(summary=True)
         number_of_features = df["number_of_features"]
         average_scores = df["average_score"]
@@ -2276,156 +2066,10 @@ class ClairvoyanceRecursive(object):
         cls = read_object(path)
         return cls
 
-def main():
-    s = """
-_______        _______ _____  ______ _    _  _____  __   __ _______ __   _ _______ _______
-|       |      |_____|   |   |_____/  \  /  |     |   \_/   |_____| | \  | |       |______
-|_____  |_____ |     | __|__ |    \_   \/   |_____|    |    |     | |  \_| |_____  |______
-    """
-    print(s, file=sys.stderr)
-    print("Hello There.\nI live here: https://github.com/jolespin/clairvoyance", file=sys.stderr)
-    if len(sys.argv) > 0:
-        if sys.argv[1] in {"--test", "-t"}:
-            from sklearn.linear_model import LogisticRegression
-            from sklearn.tree import DecisionTreeClassifier
-
-            # 1.
-
-            # Classification
-            print(format_header("1. Running test for `ClairvoyanceClassification` on iris dataset with noise"), file=sys.stderr)
-            import numpy as np
-            import pandas as pd
-            from sklearn.datasets import load_iris
-            from sklearn.linear_model import LogisticRegression
-
-            # Load iris dataset
-            X, y = load_iris(return_X_y=True, as_frame=True)
-            X.columns = X.columns.map(lambda j: j.split(" (cm")[0].replace(" ","_"))
-
-            # Relabel targets
-            target_names = load_iris().target_names
-            y = y.map(lambda i: target_names[i])
-
-            # Add 21 noise features (total = 25 features) in the same range of values as the original features
-            number_of_noise_features = 21
-            vmin = X.values.ravel().min()
-            vmax = X.values.ravel().max()
-            X_noise = pd.DataFrame(
-                data=np.random.RandomState(0).randint(low=int(vmin*10), high=int(vmax*10), size=(150, number_of_noise_features))/10,
-                columns=map(lambda j:"noise_{}".format(j+1), range(number_of_noise_features)),
-            )
-
-            X_iris_with_noise = pd.concat([X, X_noise], axis=1)
-            X_normalized = X_iris_with_noise - X_iris_with_noise.mean(axis=0).values
-            X_normalized = X_normalized/X_normalized.std(axis=0).values
-
-            # Specify model algorithm and parameter grid
-            estimator=LogisticRegression(max_iter=1000, solver="liblinear", multi_class="ovr")
-            param_grid={
-                "C":[1e-10] + (np.arange(1,11)/10).tolist(),
-                "penalty":["l1", "l2"],
-            }
-
-            # Instantiate model
-            clf = ClairvoyanceClassification(
-                n_jobs=-1, 
-                scorer="accuracy", 
-                n_draws=10, 
-                estimator=estimator, 
-                param_grid=param_grid, 
-                verbose=1,
-            )
-            clf.fit(X_normalized, y)#, sort_hyperparameters_by=["C", "penalty"], ascending=[True, False])
-            history = clf.recursive_feature_inclusion(early_stopping=10)
-            print(history.head(), file=sys.stdout)
-
-            # 2.
-            # Regression
-            print(format_header("2. Running test for `ClairvoyanceRegression` on boston dataset with noise"), file=sys.stderr)
-            # from sklearn.datasets import fetch_openml
-            from sklearn.tree import DecisionTreeRegressor
-            from sklearn.model_selection import train_test_split
-
-            # Load housing data
-            # housing = fetch_openml(name="house_prices", as_frame=True)
-            data_url = "http://lib.stat.cmu.edu/datasets/boston"
-            raw_df = pd.read_csv(data_url, sep="\s+", skiprows=22, header=None)
-            data = np.hstack([raw_df.values[::2, :], raw_df.values[1::2, :2]])
-            target = raw_df.values[1::2, 2]
-            X = pd.DataFrame(data, columns=['CRIM', 'ZN', 'INDUS', 'CHAS', 'NOX', 'RM', 'AGE', 'DIS', 'RAD', 'TAX', 'PTRATIO', 'B', 'LSTAT'])
-            y = pd.Series(target)
-
-            number_of_noise_features = 25 - X.shape[1]
-            X_noise = pd.DataFrame(np.random.RandomState(0).normal(size=(X.shape[0], number_of_noise_features)),  columns=map(lambda j: f"noise_{j}", range(number_of_noise_features)))
-            X_housing_with_noise = pd.concat([X, X_noise], axis=1)
-            X_normalized = X_housing_with_noise - X_housing_with_noise.mean(axis=0).values
-            X_normalized = X_normalized/X_normalized.std(axis=0).values
-
-            # Let's fit the model but leave a held out testing set
-            X_training, X_testing, y_training, y_testing = train_test_split(X_normalized, y, random_state=0, test_size=0.1618)
-
-            # Get parameters
-            estimator = DecisionTreeRegressor(random_state=0)
-            param_grid = {"min_samples_leaf":[1,2,3,5,8],"min_samples_split":{ 0.1618, 0.382, 0.5, 0.618}}
-
-            # Fit model
-            reg = ClairvoyanceRegression(name="Housing", n_jobs=-1, n_draws=10, estimator=estimator, param_grid=param_grid, verbose=1)
-            reg.fit(X_training, y_training)
-            history = reg.recursive_feature_inclusion(early_stopping=10, X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing)
-            print(history.head(), file=sys.stdout)
-
-            # 3.
-            # Recursive
-            print(format_header("3. Running test for `ClairvoyanceRecursive` on iris dataset with noise"), file=sys.stderr)
-            from sklearn.tree import DecisionTreeClassifier
-
-            X_normalized = X_iris_with_noise - X_iris_with_noise.mean(axis=0).values
-            X_normalized = X_normalized/X_normalized.std(axis=0).values
-            target_names = load_iris().target_names
-            y = pd.Series(load_iris().target)
-            y = y.map(lambda i: target_names[i])
-
-            # Specify model algorithm and parameter grid
-            estimator=DecisionTreeClassifier()
-            param_grid={
-                "criterion":["gini","entropy"],
-                "max_features":["log2", "sqrt", 0.382, 0.618],
-                "min_samples_leaf":[1,2,3,5,8],
-            }
-
-            # Instantiate model
-            rci = ClairvoyanceRecursive(
-                n_jobs=-1, 
-                scorer="accuracy", 
-                n_draws=10, 
-                estimator=estimator, 
-                param_grid=param_grid, 
-                percentiles=[0.0, 0.25, 0.5, 0.75, 0.9, 0.925, 0.95, 0.975, 0.99],
-                minimum_scores=[-np.inf, 0.382],
-                verbose=0,
-            )
-            rci.fit(X_normalized, y)
-            print(rci.results_.head(), file=sys.stdout)
-
-            # 4.
-            print(format_header("4. Running test for `ClairvoyanceRecursive` on iris dataset with noise [includes testing data]"), file=sys.stderr)
-
-            X_training, X_testing, y_training, y_testing = train_test_split(X_normalized, y, random_state=0, test_size=0.1618)
-
-            # Instantiate model
-            rci = ClairvoyanceRecursive(
-                n_jobs=-1, 
-                scorer="accuracy", 
-                n_draws=10, 
-                estimator=estimator, 
-                param_grid=param_grid, 
-                percentiles=[0.0, 0.25, 0.5, 0.75, 0.9, 0.925, 0.95, 0.975, 0.99],
-                minimum_scores=[-np.inf, 0.382],
-                verbose=0,
-            )
-            rci.fit(X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing)
-            print(rci.results_.head(), file=sys.stdout)
-        else:
-            print("Unrecognized command.  Available commands {--test|-t}", file=sys.stderr)
-if __name__ == "__main__":
-    main()
+# BayesianClairvoyanceBase
+# BayesianClairvoyanceClassification
+# BayesianClairvoyanceRegression
+# BayesianClairvoyanceRecursive
+# Shap?
+# feature addition or elimination
+# * Algo is going to be hyperparameter tuning then feature selection, then hyperparameter tuning then feature selection, for n_iter times. Should be good after like 10. 

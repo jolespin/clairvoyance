@@ -4,21 +4,18 @@
  |       |      |_____|   |   |_____/  \  /  |     |   \_/   |_____| | \  | |       |______
  |_____  |_____ |     | __|__ |    \_   \/   |_____|    |    |     | |  \_| |_____  |______
 ```
-#### Description
+### Description
 
-Reimplementation for `Clairvoyance` from [Espinoza & Dupont et al. 2021](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1008857).  The updated version includes regression support, support for all linear/tree-based models, and improved visualizations.  `Clairvoyance` is currently in active development.   
+Reimplementation of the `Clairvoyance` AutoML method from [Espinoza & Dupont et al. 2021](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1008857).  The updated version includes regression support, support for all linear/tree-based models, feature selection through modified `Feature-Engine` classes, and bayeisan optimization using `Optuna`.  
+
+`Clairvoyance` is currently under active development and API is subject to change.
 
 
-#### Details:
+### Details:
 `import clairvoyance as cy`
 
-Stable: `__version__ = "2023.6.26"`
 
-Developmental: `__version__ = "2023.10.13"`
-
-
-
-#### Installation
+### Installation
 
 ```
 # Stable:
@@ -26,37 +23,33 @@ Developmental: `__version__ = "2023.10.13"`
 # via PyPI
 pip install clairvoyance_feature_selection
 
-# via Conda
-conda install -c jolespin clairvoyance
 
 # Developmental:
 pip install git+https://github.com/jolespin/clairvoyance
 ```
 
-#### Citation
+### Citation
 
 Espinoza JL, Dupont CL, O’Rourke A, Beyhan S, Morales P, Spoering A, et al. (2021) Predicting antimicrobial mechanism-of-action from transcriptomes: A generalizable explainable artificial intelligence approach. PLoS Comput Biol 17(3): e1008857. https://doi.org/10.1371/journal.pcbi.1008857
 
-#### Development
+### Development
 *Clairvoyance* is currently under active development and undergoing a complete reimplementation from the ground up from the original publication.  The following includes a list of new features: 
 
-*  Supports any linear or tree-based `Scikit-Learn` compatible model
+*  Bayesian optimization using `Optuna`
+*  Supports any linear or tree-based `Scikit-Learn` compatible estimator
 *  Supports any `Scikit-Learn` compatible performance metric
 *  Supports regression (in addition to classification as in original implementation)
 *  Properly implements transformations for compositional data (e.g., CLR and closure) based on the query features for each iteration
-*  Added option to remove zero weighted features and redundant feature sets
-*  Added asymmetric mode in addition to the symmetric mode from the original implementation
-*  Added informative publication-ready plots
-*  Outputs multiple combinations of hyperparameters and scores for each feature combination
-*  Option to use testing sets or alternative models for recursive feature inclusion
+*  Option to remove zero weighted features during model refitting
+* [Pending] Visualizations for AutoML
 
+### Usage
 
-#### Usage
+#### Feature selection based on classification tasks
 
+##### Let's try using a simple Logistic Regression which can be very powerful for some tasks:
 
-
-##### Feature selection based on classification tasks
-Here's a basic classifcation using a `LogisticRegression` model and a grid search for different `C` and `penalty` parameters. We add 996 noise variables within the range of values as the original Iris features. After that we normalize them so their scale is standardized.  In this case, we are optimizing for `accuracy`.  We are using a `LogisticRegression` where we don't really have to worry about features with zero weight in the end so we are going to set `    remove_zero_weighted_features=False`.  This will allow us to plot a nice RCI curve with error.
+Here's a simple usage case for the iris dataset with 996 noise features (total = 1000 features)
 
 ```python
 import clairvoyance as cy
@@ -64,6 +57,7 @@ import numpy as np
 import pandas as pd
 from sklearn.datasets import load_iris
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
 
 # Load iris dataset
 X, y = load_iris(return_X_y=True, as_frame=True)
@@ -83,97 +77,90 @@ X_noise = pd.DataFrame(
 )
 
 X_iris_with_noise = pd.concat([X, X_noise], axis=1)
-X_normalized = X_iris_with_noise - X_iris_with_noise.mean(axis=0).values
-X_normalized = X_normalized/X_normalized.std(axis=0).values
+X_training, X_testing, y_training, y_testing = train_test_split(X_iris_with_noise, y, stratify=y, random_state=0, test_size=0.3)
 
 # Specify model algorithm and parameter grid
-estimator=LogisticRegression(max_iter=1000, solver="liblinear", multi_class="ovr")
-param_grid={
-    "C":[1e-10] + (np.arange(1,11)/10).tolist(),
-    "penalty":["l1", "l2"],
+estimator=LogisticRegression(max_iter=1000, solver="liblinear")
+param_space={
+    "C":["float", 0.0, 1.0],
+    "penalty":["categorical", ["l1", "l2"]],
 }
 
-# Instantiate model
-clf = cy.ClairvoyanceClassification(
-    n_jobs=-1, 
-    scorer="accuracy", 
-    n_draws=10, 
-    estimator=estimator, 
-    param_grid=param_grid, 
-    verbose=1,
-    remove_zero_weighted_features=False,
+# Fit the AutoML model
+model = cy.bayesian.BayesianClairvoyanceClassification(estimator, param_space,  n_iter=4, n_trials=50, feature_selection_method="addition", n_jobs=-1, verbose=0, feature_selection_performance_threshold=0.025)
+df_results = model.fit_transform(X_training, y_training, cv=3, optimize_with_training_and_testing=True, X_testing=X_testing, y_testing=y_testing)
 
-)
-clf.fit(X_normalized, y)#, sort_hyperparameters_by=["C", "penalty"], ascending=[True, False])
-history = clf.recursive_feature_inclusion(early_stopping=10)
-history.head()
+[I 2024-07-05 12:14:33,611] A new study created in memory with name: n_iter=1
+[I 2024-07-05 12:14:33,680] Trial 0 finished with values: [0.7238095238095238, 0.7333333333333333] and parameters: {'C': 0.417022004702574, 'penalty': 'l1'}. 
+[I 2024-07-05 12:14:33,866] Trial 1 finished with values: [0.7238095238095239, 0.7333333333333333] and parameters: {'C': 0.30233257263183977, 'penalty': 'l1'}. 
+[I 2024-07-05 12:14:34,060] Trial 2 finished with values: [0.39999999999999997, 0
+...
+Recursive feature addition: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 5/5 [00:00<00:00, 170.02it/s]
+Synopsis[n_iter=2] Input Features: 6, Selected Features: 1
+Initial Training Score: 0.9047619047619048, Feature Selected Training Score: 0.8761904761904762
+Initial Testing Score: 0.7777777777777778, Feature Selected Testing Score: 0.9333333333333333
+```
+
+##### Example output:
+We were able to filter out all the noise features and get just the most informative features but linear models might not be the best for this classification task.
+
+
+| study_name                           | best_hyperparameters                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | best_estimator                                                         | best_trial         | number_of_initial_features | initial_training_score | initial_testing_score | number_of_selected_features | feature_selected_training_score                                                 | feature_selected_testing_score | selected_features |
+|--------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------|--------------------|----------------------------|------------------------|-----------------------|-----------------------------|---------------------------------------------------------------------------------|--------------------------------|-------------------|
+| n_iter=1                             | {'C': 0.0745664572902166, 'penalty': 'l1'}                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | "LogisticRegression(C=0.0745664572902166, max_iter=1000, penalty='l1', |                    |                            |                        |                       |                             |                                                                                 |                                |                   |
+| random_state=0, solver='liblinear')" | FrozenTrial(number=28, state=TrialState.COMPLETE, values=[0.7904761904761904, 0.7333333333333333], datetime_start=datetime.datetime(2024, 7, 5, 12, 14, 37, 977702), datetime_complete=datetime.datetime(2024, 7, 5, 12, 14, 38, 26179), params={'C': 0.0745664572902166, 'penalty': 'l1'}, user_attrs={}, system_attrs={}, intermediate_values={}, distributions={'C': FloatDistribution(high=1.0, log=False, low=0.0, step=None), 'penalty': CategoricalDistribution(choices=('l1', 'l2'))}, trial_id=28, value=None)  | 1000                                                                   | 0.7904761904761904 | 0.7333333333333333         | 6                      | 0.9047619047619048    | 0.7333333333333333          | ['petal_length', 'noise_25', 'noise_833', 'noise_48', 'noise_653', 'noise_793'] |                                |                   |
+| n_iter=2                             | {'C': 0.9875411040455084, 'penalty': 'l1'}                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | "LogisticRegression(C=0.9875411040455084, max_iter=1000, penalty='l1', |                    |                            |                        |                       |                             |                                                                                 |                                |                   |
+| random_state=0, solver='liblinear')" | FrozenTrial(number=11, state=TrialState.COMPLETE, values=[0.9047619047619048, 0.7777777777777778], datetime_start=datetime.datetime(2024, 7, 5, 12, 14, 43, 176045), datetime_complete=datetime.datetime(2024, 7, 5, 12, 14, 43, 197241), params={'C': 0.9875411040455084, 'penalty': 'l1'}, user_attrs={}, system_attrs={}, intermediate_values={}, distributions={'C': FloatDistribution(high=1.0, log=False, low=0.0, step=None), 'penalty': CategoricalDistribution(choices=('l1', 'l2'))}, trial_id=11, value=None) | 6                                                                      | 0.9047619047619048 | 0.7777777777777778         | 1                      | 0.8761904761904762    | 0.9333333333333333          | ['petal_length']                                                                |                                |                   |
+
+
+##### Let's try it again with a tree-based model:
 
 ```
-![](images/1a.png)
+# Specify DecisionTree model algorithm and parameter grid
+from sklearn.tree import DecisionTreeClassifier
 
-```python
-clf.plot_scores(title="Iris", xtick_rotation=90)
-clf.plot_weights()
-clf.plot_weights(weight_type="cross_validation")
+estimator=DecisionTreeClassifier(random_state=0)
+param_space = {
+    "min_samples_leaf":["int", 1, 50], 
+    "min_samples_split": ["float", 0.0, 0.5], 
+    "max_features":["categorical", ["sqrt", "log2", None]],
+}
+
+model = cy.bayesian.BayesianClairvoyanceClassification(estimator, param_space,  n_iter=4, n_trials=50, feature_selection_method="addition", n_jobs=-1, verbose=0, feature_selection_performance_threshold=0.025)
+df_results = model.fit_transform(X_training, y_training, cv=3, optimize_with_training_and_testing=True, X_testing=X_testing, y_testing=y_testing)
+df_results
+
+[I 2024-07-05 12:22:09,866] A new study created in memory with name: n_iter=1
+[I 2024-07-05 12:22:11,454] Trial 0 finished with values: [0.3523809523809524, 0.37777777777777777] and parameters: {'min_samples_leaf': 21, 'min_samples_split': 0.36016224672107905, 'max_features': 'log2'}. 
+[I 2024-07-05 12:22:12,243] Trial 1 finished with values: [0.9142857142857143, 0.9555555555555556] and parameters: {'min_samples_leaf': 5, 'min_samples_split': 0.09313010568883545, 'max_features': None}. 
+[I 2024-07-05 12:22:12,999] Trial 2 finished with values: [0.3523809523809524, 0.37777777777777777] and parameters: {'min_samples_leaf': 21, 'min_samples_split': 0.34260975019837975, 'max_features': 'log2'}. 
+...
+/Users/jolespin/miniconda3/envs/soothsayer_env/lib/python3.9/site-packages/clairvoyance/feature_selection.py:632: UserWarning: remove_zero_weighted_features=True and removed 996/1000 features
+  warnings.warn("remove_zero_weighted_features=True and removed {}/{} features".format((n_features_initial - n_features_after_zero_removal), n_features_initial))
+Recursive feature addition: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3/3 [00:00<00:00, 199.54it/s]
+Synopsis[n_iter=1] Input Features: 1000, Selected Features: 1
+Initial Training Score: 0.9238095238095237, Feature Selected Training Score: 0.9619047619047619
+Initial Testing Score: 0.9555555555555556, Feature Selected Testing Score: 0.9555555555555556
 ```
-![](images/2a.png)
 
-There are still a few noise variables, though with much lower weight, suggesting our classifier is modeling noise.  We can add an additional penalty where a change in score must exceed a threshold to add a new feature during the recursive feature inclusion algorithm.  We are keeping `    remove_zero_weighted_features=False` for this example.
+##### Example output:
+We were able to get much higher perfomance on both the training and testing sets while identifying the most informative feature(s).
 
-```python
-history = clf.recursive_feature_inclusion(early_stopping=10, minimum_improvement_in_score=0.05)
-clf.plot_scores(title="Iris", xtick_rotation=90)
-clf.plot_weights()
-clf.plot_weights(weight_type="cross_validation")
-```
-![](images/3a.png)
+| study_name                                              | best_hyperparameters                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | best_estimator                              | best_trial         | number_of_initial_features | initial_training_score | initial_testing_score | number_of_selected_features | feature_selected_training_score | feature_selected_testing_score | selected_features |
+|---------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------|--------------------|----------------------------|------------------------|-----------------------|-----------------------------|---------------------------------|--------------------------------|-------------------|
+| n_iter=1                                                | {'min_samples_leaf': 9, 'min_samples_split': 0.10616631466626364, 'max_features': None}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | "DecisionTreeClassifier(min_samples_leaf=9, |                    |                            |                        |                       |                             |                                 |                                |                   |
+| min_samples_split=0.10616631466626364, random_state=0)" | FrozenTrial(number=12, state=TrialState.COMPLETE, values=[0.9238095238095237, 0.9555555555555556], datetime_start=datetime.datetime(2024, 7, 5, 12, 22, 16, 644273), datetime_complete=datetime.datetime(2024, 7, 5, 12, 22, 16, 712703), params={'min_samples_leaf': 9, 'min_samples_split': 0.10616631466626364, 'max_features': None}, user_attrs={}, system_attrs={}, intermediate_values={}, distributions={'min_samples_leaf': IntDistribution(high=50, log=False, low=1, step=1), 'min_samples_split': FloatDistribution(high=0.5, log=False, low=0.0, step=None), 'max_features': CategoricalDistribution(choices=('sqrt', 'log2', None))}, trial_id=12, value=None) | 1000                                        | 0.9238095238095237 | 0.9555555555555556         | 1                      | 0.9619047619047619    | 0.9555555555555556          | ['petal_width']                 |                                |                   |
 
-Now let's do a binary classification but optimize `fbeta` score instead of `accuracy`.  Instead of a fixed penalty, we are going to use a custom penalty that scales with the number of features included. 
 
-```python
-from sklearn.metrics import fbeta_score
+#### Feature selection based on regression tasks
 
-# Let's do a binary classification
-y_notsetosa = y.map(lambda x: {True:"not_setosa", False:x}[x != "setosa"]) 
-
-# Let's also use a FBeta scorer
-scorer = make_scorer(fbeta_score, average="binary", beta=0.5, pos_label="setosa")
-
-# Instantiate model
-clf_binary = cy.ClairvoyanceClassification(
-    n_jobs=-1, 
-    scorer="accuracy", 
-    n_draws=10, 
-    estimator=estimator, 
-    param_grid=param_grid, 
-    remove_zero_weighted_features=False,
-    verbose=1,
-)
-
-# Let's also prefer lower C values and l1 over l2 (i.e., stronger regularization and sparsity)
-clf_binary.fit(X_normalized, y, sort_hyperparameters_by=["C", "penalty"], ascending=[True, True]) 
-
-# Instead of adding a fixed penalty for adding new features, let's add a function that scales with the number of features
-history = clf_binary.recursive_feature_inclusion(early_stopping=10, additional_feature_penalty=lambda n: 1e-3*n**2)
-history.head()
-```
-![](images/4a.png)
+Alright, let's switch it up and model a regression task instead. We are going to do the controversial boston housing dataset just because it's easy. We are going to use the RMSE scorer from `Scikit-Learn` and increase the number of iterations for the bayesian hyperparamter optimzation.
 
 ```python
-clf_binary.plot_scores(title="Iris (Binary)", xtick_rotation=90)
-clf_binary.plot_weights()
-clf_binary.plot_weights(weight_type="cross_validation")
-```
-![](images/5a.png)
-
-##### Feature selection based on regression tasks
-Here's a basic regression using a `DecisionTreeRegressor` model and a grid search for different `min_samples_leaf` and `min_samples_split` parameters. We add 87 noise variables and normalize all of the features so their scale is standardized.  In this case, we are optimizing for `neg_root_mean_squared_error`.  We are using a validation set of ~16% of the data during our recursive feature inclusion. For decision trees, we have the issue of getting zero-weighted features which are uninformative and misleading for RCI.  To get around this, we implement a recursive feature removal that only keeps non-zero weighted features.  We can turn this on via `remove_zero_weighted_features=True`.  This also ensures that there are no redundant feature sets (not an issue when `remove_zero_weighted_features=False` because they are recursively added).  
-
-Note: When we use `remove_zero_weighted_features=True`, we get a scatter plot instead of a line plot with error because there are multiple feature sets (each with their own performance distribution on the CV set) that may have the same number of features.
-
-```python
+# Load modules
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
 
 # Load Boston data
 # from sklearn.datasets import load_boston; boston = load_boston() # Deprecated
@@ -184,108 +171,48 @@ target = raw_df.values[1::2, 2]
 X = pd.DataFrame(data, columns=['CRIM', 'ZN', 'INDUS', 'CHAS', 'NOX', 'RM', 'AGE', 'DIS', 'RAD', 'TAX', 'PTRATIO', 'B', 'LSTAT'])
 y = pd.Series(target)
 
-number_of_noise_features = 100 - X.shape[1]
+# Add some noise features to total 1000 features
+number_of_noise_features = 1000 - X.shape[1]
 X_noise = pd.DataFrame(np.random.RandomState(0).normal(size=(X.shape[0], number_of_noise_features)),  columns=map(lambda j: f"noise_{j}", range(number_of_noise_features)))
 X_boston_with_noise = pd.concat([X, X_noise], axis=1)
 X_normalized = X_boston_with_noise - X_boston_with_noise.mean(axis=0).values
 X_normalized = X_normalized/X_normalized.std(axis=0).values
 
 # Let's fit the model but leave a held out testing set
-X_training, X_testing, y_training, y_testing = train_test_split(X_normalized, y, random_state=0, test_size=0.3)
+X_training, X_testing, y_training, y_testing = train_test_split(X_normalized, y, random_state=0, test_size=0.1)
 
-# Get parameters
+# Define the parameter space
 estimator = DecisionTreeRegressor(random_state=0)
-param_grid = {"min_samples_leaf":[1,2,3,5,8],"min_samples_split":{ 0.1618, 0.382, 0.5, 0.618}}
-
-# Fit model
-reg = cy.ClairvoyanceRegression(
-	name="Boston", 
-	n_jobs=-1, 
-	n_draws=10, 
-	estimator=estimator, 
-	param_grid=param_grid, 
-	verbose=1,
-	remove_zero_weighted_features=True,
-)
-reg.fit(X_training, y_training)
-history = reg.recursive_feature_inclusion(early_stopping=10, X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing)
-history.head()
-```
-![](images/6a.png)
-
-```python
-reg.plot_scores(title="Boston", xtick_rotation=90)
-reg.plot_weights()
-reg.plot_weights(weight_type="cross_validation")
-```
-![](images/7a.png)
-
-Let's see if we can increase the performance using the weights fitted with a `DecisionTreeRegressor` but with an ensemble `GradientBoostingRegressor` for the actual feature inclusion algorithm. 
-
-```python
-from sklearn.ensemble import GradientBoostingRegressor
-# Get the relevant parameters from the DecisionTreeRegressor that will be be applicable to the ensemble
-relevant_params_from_best_decisiontree_estimator = {k:reg.best_estimator_.get_params()[k] for k in ["criterion", "min_samples_split"]}
-# Get estimator
-estimator = GradientBoostingRegressor(random_state=0, **relevant_params_from_best_decisiontree_estimator)
-# Recursive feature inclusion using ensemble 
-history = reg.recursive_feature_inclusion(early_stopping=10, estimator=estimator, X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing)
-reg.plot_scores(title="Boston", xtick_rotation=90)
-reg.plot_weights()
-reg.plot_weights(weight_type="cross_validation")
-
-
-```
-![](images/8a.png)
-
-RMSE is looking better.
-
-##### Recursive feature selection based on classification tasks
-Here we are running `Clairvoyance` recursively identifying several feature sets that work with different hyperparameters to get a range of feature sets to select from in the end.  We will iterate through all of the hyperparamater configurations, recursively feed in the data using different percentiles of the weights, and use different score thresholds from the random draws.  The recursive usage is similar to the legacy implementation used in [Espinoza & Dupont et al. 2021](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1008857) (which is still provided as an executable).
-
-```python
-# Get the iris data (again)
-X_normalized = X_iris_with_noise - X_iris_with_noise.mean(axis=0).values
-X_normalized = X_normalized/X_normalized.std(axis=0).values
-target_names = load_iris().target_names
-y = pd.Series(load_iris().target)
-y = y.map(lambda i: target_names[i])
-
-# Specify model algorithm and parameter grid
-estimator=LogisticRegression(max_iter=1000, solver="liblinear", multi_class="ovr")
-param_grid={
-    "C":[1e-10] + (np.arange(1,11)/10).tolist(),
-    "penalty":["l1", "l2"],
+param_space = {
+    "min_samples_leaf":["int", 1, 50], 
+    "min_samples_split": ["float", 0.0, 0.5], 
+    "max_features":["categorical", ["sqrt", "log2", None]],
 }
+scorer = make_scorer(mean_squared_error, greater_is_better=False)
 
-# Instantiate model
-X_training, X_testing, y_training, y_testing = train_test_split(X_normalized, y, random_state=0, test_size=0.3)
+# Fit the AutoML model
+model = BayesianClairvoyanceRegression(estimator, param_space,  n_iter=4, n_trials=10, feature_selection_method="addition", n_jobs=-1, verbose=1, feature_selection_performance_threshold=0.0)
+df_results = model.fit_transform(X_training, y_training, cv=5, optimize_with_training_and_testing="auto", X_testing=X_testing, y_testing=y_testing)
 
-rci = cy.ClairvoyanceRecursive(
-    n_jobs=-1, 
-    scorer="accuracy", 
-    n_draws=10, 
-    estimator=estimator, 
-    param_grid=param_grid, 
-    percentiles=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.925, 0.95, 0.975, 0.99],
-    minimum_scores=[-np.inf, 0.382, 0.5],
-    verbose=0,
-    remove_zero_weighted_features=False,
-)
-rci.fit(X=X_training, y=y_training, X_testing=X_testing, y_testing=y_testing, sort_hyperparameters_by=["C", "penalty"], ascending=[True, True])
-rci.plot_recursive_feature_selection()
+I 2024-07-06 01:30:03,567] A new study created in memory with name: n_iter=1
+[I 2024-07-06 01:30:03,781] Trial 0 finished with values: [-8.199129905056083, -10.15240690512492] and parameters: {'min_samples_leaf': 21, 'min_samples_split': 0.36016224672107905, 'max_features': 'log2'}. 
+[I 2024-07-06 01:30:04,653] Trial 1 finished with values: [-4.971853722495094, -6.666700255530846] and parameters: {'min_samples_leaf': 5, 'min_samples_split': 0.09313010568883545, 'max_features': None}. 
+[I 2024-07-06 01:30:05,188] Trial 2 finished with values: [-8.230463026740736, -10.167328393077224] and parameters: {'min_samples_leaf': 21, 'min_samples_split': 0.34260975019837975, 'max_features': 'log2'}. 
+...
+Recursive feature addition: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 116.99it/s]
+Synopsis[n_iter=4] Input Features: 3, Selected Features: 3
+Initial Training Score: -4.972940969198907, Feature Selected Training Score: -4.972940969198907
+Initial Testing Score: -6.313587662660524, Feature Selected Testing Score: -6.313587662660524
 
 ```
-![](images/9a.png)
 
-```python
-# Plot score comparisons
-rci.plot_scores_comparison()
-rci.get_history().head()
-```
+#### Example output: 
 
-Let's see which feature sets have the highest validation score (i.e., average cross-validation score) and highest testing score (not used during RCI) while also considering the number of features.
+We successfully removed all the noise features and determined that `RM, LSTAT, CRIM` are the most important features. It's a controversial interpretation so I'm not going there but these results agree with what [other researchers](https://towardsdatascience.com/linear-regression-on-boston-housing-dataset-f409b7e4a155) have determined as well. 
 
-![](images/10a.png)
-
-Looks like there are several hyperparameter sets that can predict at > 92% accuracy on the cross-validation and > 95% accuracy on the testing set using just the `petal_length` and `petal_width`.  This was able to filter out both the 96 noise features and the 2 non-informative real features.
+| study_name | best_hyperparameters                                                                      | best_estimator                                                                                                           | best_trial                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | number_of_initial_features | initial_training_score | initial_testing_score | number_of_selected_features | feature_selected_training_score | feature_selected_testing_score | selected_features                                                                                                                |
+|------------|-------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------|------------------------|-----------------------|-----------------------------|---------------------------------|--------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| n_iter=1   | {'min_samples_leaf': 5, 'min_samples_split': 0.09313010568883545, 'max_features': None}   | DecisionTreeRegressor(min_samples_leaf=5, min_samples_split=0.09313010568883545,                       random_state=0)   | FrozenTrial(number=1, state=TrialState.COMPLETE, values=[-4.971853722495094, -6.666700255530846], datetime_start=datetime.datetime(2024, 7, 6, 1, 30, 4, 256210), datetime_complete=datetime.datetime(2024, 7, 6, 1, 30, 4, 653385), params={'min_samples_leaf': 5, 'min_samples_split': 0.09313010568883545, 'max_features': None}, user_attrs={}, system_attrs={}, intermediate_values={}, distributions={'min_samples_leaf': IntDistribution(high=50, log=False, low=1, step=1), 'min_samples_split': FloatDistribution(high=0.5, log=False, low=0.0, step=None), 'max_features': CategoricalDistribution(choices=('sqrt', 'log2', None))}, trial_id=1, value=None)     | 1000                       | -4.971853722495094     | -6.666700255530846    | 12                          | -4.167626439610535              | -6.497959383451274             | ['RM', 'LSTAT', 'CRIM', 'DIS', 'TAX', 'noise_657', 'noise_965', 'noise_711', 'noise_213', 'noise_930', 'noise_253', 'noise_484'] |
+| n_iter=2   | {'min_samples_leaf': 30, 'min_samples_split': 0.11300600030211794, 'max_features': None}  | DecisionTreeRegressor(min_samples_leaf=30,                       min_samples_split=0.11300600030211794, random_state=0)  | FrozenTrial(number=5, state=TrialState.COMPLETE, values=[-4.971072001107094, -6.2892657979392474], datetime_start=datetime.datetime(2024, 7, 6, 1, 30, 12, 603770), datetime_complete=datetime.datetime(2024, 7, 6, 1, 30, 12, 619502), params={'min_samples_leaf': 30, 'min_samples_split': 0.11300600030211794, 'max_features': None}, user_attrs={}, system_attrs={}, intermediate_values={}, distributions={'min_samples_leaf': IntDistribution(high=50, log=False, low=1, step=1), 'min_samples_split': FloatDistribution(high=0.5, log=False, low=0.0, step=None), 'max_features': CategoricalDistribution(choices=('sqrt', 'log2', None))}, trial_id=5, value=None) | 12                         | -4.971072001107094     | -6.2892657979392474   | 4                           | -4.944562598653571              | -6.3774459339786524            | ['RM', 'LSTAT', 'CRIM', 'noise_213']                                                                                             |
+| n_iter=3   | {'min_samples_leaf': 45, 'min_samples_split': 0.06279265523191813, 'max_features': None}  | DecisionTreeRegressor(min_samples_leaf=45,                       min_samples_split=0.06279265523191813, random_state=0)  | FrozenTrial(number=1, state=TrialState.COMPLETE, values=[-5.236077512452411, -6.670753984555223], datetime_start=datetime.datetime(2024, 7, 6, 1, 30, 14, 831786), datetime_complete=datetime.datetime(2024, 7, 6, 1, 30, 14, 848240), params={'min_samples_leaf': 45, 'min_samples_split': 0.06279265523191813, 'max_features': None}, user_attrs={}, system_attrs={}, intermediate_values={}, distributions={'min_samples_leaf': IntDistribution(high=50, log=False, low=1, step=1), 'min_samples_split': FloatDistribution(high=0.5, log=False, low=0.0, step=None), 'max_features': CategoricalDistribution(choices=('sqrt', 'log2', None))}, trial_id=1, value=None)  | 4                          | -5.236077512452411     | -6.670753984555223    | 3                           | -5.236077512452413              | -6.670753984555223             | ['RM', 'LSTAT', 'CRIM']                                                                                                          |
+| n_iter=4   | {'min_samples_leaf': 30, 'min_samples_split': 0.004493048833777491, 'max_features': None} | DecisionTreeRegressor(min_samples_leaf=30,                       min_samples_split=0.004493048833777491, random_state=0) | FrozenTrial(number=3, state=TrialState.COMPLETE, values=[-4.972940969198907, -6.313587662660524], datetime_start=datetime.datetime(2024, 7, 6, 1, 30, 19, 160978), datetime_complete=datetime.datetime(2024, 7, 6, 1, 30, 19, 177029), params={'min_samples_leaf': 30, 'min_samples_split': 0.004493048833777491, 'max_features': None}, user_attrs={}, system_attrs={}, intermediate_values={}, distributions={'min_samples_leaf': IntDistribution(high=50, log=False, low=1, step=1), 'min_samples_split': FloatDistribution(high=0.5, log=False, low=0.0, step=None), 'max_features': CategoricalDistribution(choices=('sqrt', 'log2', None))}, trial_id=3, value=None) | 3                          | -4.972940969198907     | -6.313587662660524    | 3                           | -4.972940969198907              | -6.313587662660524             | ['RM', 'LSTAT', 'CRIM']                                                                                                          |

@@ -1,0 +1,11 @@
+tqdm>=4.19
+pandas>=1.2.4,
+numpy>=1.13
+scipy>=1.0
+scikit-learn>=1.0
+matplotlib>=2
+xarray>=0.10.3
+seaborn>=0.10.1
+optuna>=3.6.1
+feature_engine>=1.8.0
+#shap>=0.45.1
