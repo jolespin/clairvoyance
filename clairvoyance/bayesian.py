@@ -23,7 +23,15 @@ from feature_engine.selection import DropConstantFeatures, DropDuplicateFeatures
 import optuna
 
 from .utils import *
-from .feature_selection import ClairvoyanceRecursiveFeatureAddition, ClairvoyanceRecursiveFeatureElimination
+from .transformations import (
+    closure, 
+    clr, 
+    clr_with_multiplicative_replacement,
+)
+from .feature_selection import (
+    ClairvoyanceRecursiveFeatureAddition, 
+    ClairvoyanceRecursiveFeatureElimination,
+)
 
 _bayesianclairvoyancebase_docstring = """
         # Modeling parameters:
@@ -238,7 +246,13 @@ class BayesianClairvoyanceBase(object):
         self.log = log
 
         # Data
-        assert_acceptable_arguments(transformation, {None,"clr","closure", "clr_with_multiplicative_replacement"})
+        if isinstance(transformation, str):
+            assert_acceptable_arguments(transformation, {"closure", "clr", "clr_with_multiplicative_replacement"})
+            transformation = globals()[transformation]
+
+        if transformation is not None:
+            assert hasattr(transformation, "__call__"), "If `transform` is not None, then it must be a callable function"
+
         self.transformation = transformation
         self.copy_X = copy_X
         self.copy_y = copy_y
