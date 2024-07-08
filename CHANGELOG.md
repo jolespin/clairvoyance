@@ -1,5 +1,6 @@
 # Change  Log
 
+* [2024.7.8] - Added `memory_profiler` to `.fit` and `.fit_transform` in `clairvoyance.bayesian` classes
 * [2024.7.6] - Using `get_feature_importances` from `Feature-Engine` instead of `format_weights`.
 * [2024.7.6] - Demoted `ClairvoyanceBase`, `ClairvoyanceRegression`, `ClairvoyanceClassification`, and `ClairvoyanceRecursive` to `clairvoyance.legacy.`
 * [2024.7.6] - Added `BayesianClairvoyanceBase`, `BayesianClairvoyanceClassification`, and `BayesianClairvoyanceRegression` in `clairvoyance.bayesian. which use `Optuna` for hyperparameter tuning and  `ClairvoyanceRecursiveFeatureAddition` or `ClairvoyanceRecursiveElimination` for feature selection.
