@@ -1,4 +1,4 @@
-__version__ = "2024.7.6"
+__version__ = "2024.7.8"
 
 from . import utils
 from . import visuals

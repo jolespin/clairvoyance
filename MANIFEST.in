@@ -2,6 +2,7 @@ graft clairvoyance
 include setup.py
 include LICENSE.txt
 include README.md
+include requirements.txt
 global-exclude *.py[cod]
 global-exclude Icon*
 global-exclude .DS_Store

@@ -33,6 +33,9 @@ from .feature_selection import (
     ClairvoyanceRecursiveFeatureElimination,
 )
 
+# Memory profiling
+from memory_profiler import profile
+
 _bayesianclairvoyancebase_docstring = """
         # Modeling parameters:
         # ====================
@@ -455,7 +458,6 @@ class BayesianClairvoyanceBase(object):
             # Show the feature weights be scaled? Before or after
             return (selected_features, model_fs.initial_feature_importances_, model_fs.feature_selected_importances_, model_fs.performance_drifts_, feature_selected_training_cv, feature_selected_testing_score)
                 
-
     def _fit(self, X, y, cv, X_testing=None, y_testing=None, optimize_with_training_and_testing="auto", **study_kws): # How to use the test set here?
         if self.copy_X:
             self.X_ = X.copy()
@@ -624,6 +626,7 @@ class BayesianClairvoyanceBase(object):
         df.index.name = "study_name"
         return df
         
+    @profile
     def fit(self, X, y, cv=3, X_testing=None, y_testing=None, optimize_with_training_and_testing="auto", **study_kws):
         self._fit(
             X=X,
@@ -637,6 +640,7 @@ class BayesianClairvoyanceBase(object):
         self.results_ = self._get_results()
         return self
 
+    @profile
     def fit_transform(self, X, y, cv=3, X_testing=None, y_testing=None, optimize_with_training_and_testing="auto", **study_kws):
         self._fit(
             X=X,

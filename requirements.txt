@@ -8,4 +8,5 @@ xarray>=0.10.3
 seaborn>=0.10.1
 optuna>=3.6.1
 feature_engine>=1.8.0
+memory-profiler
 #shap>=0.45.1
