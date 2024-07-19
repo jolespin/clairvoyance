@@ -1,6 +1,6 @@
 import sys,warnings
-from typing import List, Union
-
+from typing import Any, List, Union
+from tqdm import tqdm
 import numpy as np
 import pandas as pd
 from scipy.stats import sem 
@@ -8,10 +8,8 @@ from sklearn.model_selection import cross_validate
 from sklearn.metrics import get_scorer, make_scorer
 from sklearn.base import is_classifier, is_regressor
 
-from feature_engine._check_init_parameters.check_variables import (
-    _check_variables_input_value,
-)
 
+# Feature Engine
 from feature_engine._docstrings.init_parameters.selection import (
     _confirm_variables_docstring,
     _estimator_docstring,
@@ -19,14 +17,11 @@ from feature_engine._docstrings.init_parameters.selection import (
 )
 
 from feature_engine.dataframe_checks import check_X_y
-from feature_engine.selection.base_selection_functions import get_feature_importances
-from feature_engine.selection.base_selector import BaseSelector
+
+
+
 from feature_engine.tags import _return_tags
-from feature_engine.variable_handling import (
-    check_numerical_variables,
-    find_numerical_variables,
-    retain_variables_if_in_df,
-)
+
 
 from feature_engine._docstrings.methods import _fit_transform_docstring
 
@@ -51,7 +46,187 @@ from feature_engine._docstrings.selection._docstring import (
 )
 from feature_engine._docstrings.substitute import Substitution
 
-from tqdm import tqdm
+# v1.8.+
+Variables = Union[None, int, str, List[Union[str, int]]]
+try:
+    from feature_engine.selection.base_selection_functions import get_feature_importances
+    from feature_engine.selection.base_selector import BaseSelector
+    from feature_engine._check_init_parameters.check_variables import (
+    _check_variables_input_value,
+    )
+    from feature_engine.variable_handling import (
+        check_numerical_variables,
+        find_numerical_variables,
+        retain_variables_if_in_df,
+    )
+# v1.6.2
+except ImportError:
+    from feature_engine.selection.base_selector import BaseSelector, get_feature_importances
+    
+    def _check_variables_input_value(variables: Variables) -> Any:
+        """
+        Checks that the input value for the `variables` parameter located in the init of
+        all Feature-engine transformers is of the correct type.
+        Allowed  values are None, int, str or list of strings and integers.
+
+        Parameters
+        ----------
+        variables : string, int, list of strings, list of integers. Default=None
+
+        Returns
+        -------
+        variables: same as input
+        """
+
+        msg = (
+            "`variables` should contain a string, an integer or a list of strings or "
+            f"integers. Got {variables} instead."
+        )
+        msg_dupes = "The list entered in `variables` contains duplicated variable names."
+        msg_empty = "The list of `variables` is empty."
+
+        if variables is not None:
+            if isinstance(variables, list):
+                if not all(isinstance(i, (str, int)) for i in variables):
+                    raise ValueError(msg)
+                if len(variables) == 0:
+                    raise ValueError(msg_empty)
+                if len(variables) != len(set(variables)):
+                    raise ValueError(msg_dupes)
+            else:
+                if not isinstance(variables, (str, int)):
+                    raise ValueError(msg)
+        return variables
+    
+    def check_numerical_variables(
+        X: pd.DataFrame, variables: Variables
+    ) -> List[Union[str, int]]:
+        """
+        Checks that the variables in the list are of type numerical.
+
+        More details in the :ref:`User Guide <check_num_vars>`.
+
+        Parameters
+        ----------
+        X : pandas dataframe of shape = [n_samples, n_features]
+            The dataset.
+
+        variables : List
+            The list with the names of the variables to check.
+
+        Returns
+        -------
+        variables: List
+            The names of the numerical variables.
+
+        Examples
+        --------
+        >>> import pandas as pd
+        >>> from feature_engine.variable_handling import check_numerical_variables
+        >>> X = pd.DataFrame({
+        >>>     "var_num": [1, 2, 3],
+        >>>     "var_cat": ["A", "B", "C"],
+        >>>     "var_date": pd.date_range("2020-02-24", periods=3, freq="T")
+        >>> })
+        >>> var_ = check_numerical_variables(X, variables=["var_num"])
+        >>> var_
+        ['var_num']
+        """
+
+        if isinstance(variables, (str, int)):
+            variables = [variables]
+
+        if len(X[variables].select_dtypes(exclude="number").columns) > 0:
+            raise TypeError(
+                "Some of the variables are not numerical. Please cast them as "
+                "numerical before using this transformer."
+            )
+
+        return variables
+    
+    def find_numerical_variables(X: pd.DataFrame) -> List[Union[str, int]]:
+        """
+        Returns a list with the names of all the numerical variables in a dataframe.
+
+        More details in the :ref:`User Guide <find_num_vars>`.
+
+        Parameters
+        ----------
+        X : pandas dataframe of shape = [n_samples, n_features]
+            The dataset.
+
+        Returns
+        -------
+        variables: List
+            The names of the numerical variables.
+
+        Examples
+        --------
+        >>> import pandas as pd
+        >>> from feature_engine.variable_handling import find_numerical_variables
+        >>> X = pd.DataFrame({
+        >>>     "var_num": [1, 2, 3],
+        >>>     "var_cat": ["A", "B", "C"],
+        >>>     "var_date": pd.date_range("2020-02-24", periods=3, freq="T")
+        >>> })
+        >>> var_ = find_numerical_variables(X)
+        >>> var_
+        ['var_num']
+        """
+        variables = list(X.select_dtypes(include="number").columns)
+        if len(variables) == 0:
+            raise TypeError(
+                "No numerical variables found in this dataframe. Please check "
+                "variable format with pandas dtypes."
+            )
+        return variables
+    
+    def retain_variables_if_in_df(X, variables):
+        """Returns the subset of variables in the list that are present in the dataframe.
+
+        More details in the :ref:`User Guide <retain_vars>`.
+
+        Parameters
+        ----------
+        X:  pandas dataframe of shape = [n_samples, n_features]
+            The dataset.
+
+        variables: string, int or list of strings or int.
+            The names of the variables to check.
+
+        Returns
+        -------
+        variables_in_df: List.
+            The subset of `variables` that is present `X`.
+
+            Examples
+        --------
+        >>> import pandas as pd
+        >>> from feature_engine.variable_handling import retain_variables_if_in_df
+        >>> X = pd.DataFrame({
+        >>>     "var_num": [1, 2, 3],
+        >>>     "var_cat": ["A", "B", "C"],
+        >>>     "var_date": pd.date_range("2020-02-24", periods=3, freq="T")
+        >>> })
+        >>> vars_in_df = retain_variables_if_in_df(X, ['var_num', 'var_cat', 'var_other'])
+        >>> vars_in_df
+        ['var_num', 'var_cat']
+        """
+        if isinstance(variables, (str, int)):
+            variables = [variables]
+
+        variables_in_df = [var for var in variables if var in X.columns]
+
+        # Raise an error if no column is left to work with.
+        if len(variables_in_df) == 0:
+            raise ValueError(
+                "None of the variables in the list are present in the dataframe."
+            )
+
+        return variables_in_df
+
+
+# Internals
 from .utils import (
     assert_acceptable_arguments, 
     check_testing_set, 
@@ -65,7 +240,7 @@ from .transformations import (
     clr_with_multiplicative_replacement,
 )
 
-Variables = Union[None, int, str, List[Union[str, int]]]
+
 
 
 _get_transformation_docstring = """

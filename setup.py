@@ -27,7 +27,7 @@ with open(path.join(script_directory, 'requirements.txt')) as f:
 
 setup(name='clairvoyance_feature_selection',
       version=version,
-      description='Feature selection via recursive feature inclusion',
+      description='AutoML simultaneous bayesian hyperparameter optimization and feature selection',
       url='https://github.com/jolespin/clairvoyance',
       author='Josh L. Espinoza',
       author_email='jol.espinoz@gmail.com',

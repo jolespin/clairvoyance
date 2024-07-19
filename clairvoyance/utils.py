@@ -14,8 +14,12 @@ from scipy.stats import sem
 from sklearn.base import clone, is_classifier, is_regressor
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.model_selection import cross_validate, RepeatedStratifiedKFold, StratifiedKFold, RepeatedKFold, KFold
-from feature_engine.selection.base_selection_functions import get_feature_importances
 
+try:
+    from feature_engine.selection.base_selection_functions import get_feature_importances
+except ImportError:
+    # v1.6.2
+    from feature_engine.selection.base_selector import get_feature_importances
 
 # from shap import Explainer, TreeExplainer, LinearExplainer
 # from shap.maskers import Independent
