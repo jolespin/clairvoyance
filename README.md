@@ -113,7 +113,7 @@ We were able to filter out all the noise features and get just the most informat
 
 ##### Let's try it again with a tree-based model:
 
-```
+```python
 # Specify DecisionTree model algorithm and parameter grid
 from sklearn.tree import DecisionTreeClassifier
 
