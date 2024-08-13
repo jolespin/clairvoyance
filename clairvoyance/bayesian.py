@@ -657,12 +657,12 @@ class BayesianClairvoyanceBase(object):
 
     def to_file(self, filepath):
         self.log = None
-        write_object(self, filepath)
+        write_pickle(self, filepath)
                                    
 
     @classmethod
     def from_file(cls, filepath, log=sys.stdout):
-        cls = read_object(filepath)
+        cls = read_pickle(filepath)
         cls.log = log
         return cls
 

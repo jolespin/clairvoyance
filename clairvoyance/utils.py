@@ -2,7 +2,7 @@
 
 # Built-ins
 from ast import Or
-import os, sys, time, warnings, gzip, bz2, operator, pickle
+import os, sys, time, warnings, gzip, bz2, operator, pickle, functools, importlib
 from tqdm import tqdm, tqdm_notebook
 
 # PyData
@@ -230,60 +230,87 @@ def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, rand
 
 # I/O
 # ====
-# Reading serial object
-def read_object(path, compression="infer", serialization_module=pickle):
-    path = format_path(path, str)
-
-    if compression == "infer":
-        _ , ext = os.path.splitext(path)
-        if (ext == ".pkl") or (ext == ".dill"):
-            compression = None
-        if ext in {".pgz", ".gz"}:
-            compression = "gzip"
-        if ext in {".pbz2", ".bz2"}:
-            compression = "bz2"
-    if compression is not None:
-        if compression == "gzip":
-            f = gzip.open(path, "rb")
-        if compression == "bz2":
-            f = bz2.open(path, "rb")
-    else:
-        f = open(path, "rb")
-    obj = serialization_module.load(f)
-    f.close()
-    return obj
-
-# Writing serial object
-def write_object(obj, path, compression="infer", serialization_module=pickle, protocol=None, *args):
+# Read/Write
+# ==========
+# Get file object
+def open_file_reader(filepath: str, compression="auto", binary=False):
     """
-    Extensions:
-    pickle ==> .pkl
-    dill ==> .dill
-    gzipped-pickle ==> .pgz
-    bzip2-pickle ==> .pbz2
+    Opens a file for reading with optional compression.
+
+    Args:
+        filepath (str): Path to the file.
+        compression (str, optional): Type of compression {None, 'gzip', 'bz2'}. Defaults to "auto".
+        binary (bool, optional): Whether to open the file in binary mode. Defaults to False.
+
+    Returns:
+        file object: A file-like object.
     """
-    assert obj is not None, "Warning: `obj` is NoneType"
-    path = format_path(path, str)
-
-    # Use infer_compression here
-    if compression == "infer":
-        _ , ext = os.path.splitext(path)
-        if ext in {".pkl", ".dill"}: # if ext in (ext == ".pkl") or (ext == ".dill"):
-            compression = None
-        if ext in {".pgz", ".gz"}:
+    # Determine compression type based on the file extension if 'auto' is specified
+    if compression == "auto":
+        ext = filepath.split(".")[-1].lower()
+        if ext == "gz":
             compression = "gzip"
-        if ext in {".pbz2", ".bz2"}:
+        elif ext == "bz2":
             compression = "bz2"
-    if compression is not None:
-        if compression == "bz2":
-            f = bz2.BZ2File(path, "wb")
-        if compression == "gzip":
-            f = gzip.GzipFile(path, "wb")
-    else:
-        f = open(path, "wb")
-    serialization_module.dump(obj, f, protocol=protocol, *args)
-    f.close()
+        else:
+            compression = None
 
+    # Determine the mode based on the 'binary' flag
+    mode = "rb" if binary else "rt"
+
+    # Open the file with or without compression
+    if not compression:
+        return open(filepath, mode)
+    elif compression == "gzip":
+        return gzip.open(filepath, mode)
+    elif compression == "bz2":
+        return bz2.open(filepath, mode)
+    else:
+        raise ValueError(f"Unsupported compression type: {compression}")
+            
+# Get file object
+def open_file_writer(filepath: str, compression="auto", binary=False):
+    """
+    Args:
+        filepath (str): path/to/file
+        compression (str, optional): {None, gzip, bz2}. Defaults to "auto".
+        binary (bool, optional): Whether to open the file in binary mode. Defaults to False.
+    
+    Returns:
+        file object
+    """
+    if compression == "auto":
+        ext = filepath.split(".")[-1].lower()
+        if ext == "gz":
+            compression = "gzip"
+        elif ext == "bz2":
+            compression = "bz2"
+        else:
+            compression = None
+
+    if binary:
+        mode = "wb"
+    else:
+        mode = "wt"
+
+    if not compression:
+        return open(filepath, mode)
+    elif compression == "gzip":
+        return gzip.open(filepath, mode)
+    elif compression == "bz2":
+        return bz2.open(filepath, mode)
+    else:
+        raise ValueError(f"Unsupported compression type: {compression}")
+
+# Pickle I/O
+def read_pickle(filepath, compression="auto"):
+    with open_file_reader(filepath, compression=compression, binary=True) as f:
+        return pickle.load(f)
+    
+def write_pickle(obj, filepath, compression="auto"):
+    with open_file_writer(filepath, compression=compression, binary=True) as f:
+        pickle.dump(obj, f)
+        
 # Misc
 # ====
 # Wrapper for tqdm
@@ -477,3 +504,58 @@ def format_feature_importances_from_data(estimator, X, y):
         "mean":feature_importances_mean,
         "sem":feature_importances_sem,
     }
+
+
+def check_packages(packages, namespace=None, import_into_backend=False, verbose=False):
+    """
+    Check if Python packages are available and optionally import them into the specified namespace or backend.
+    
+    Args:
+        packages (str or iterable): List of package names or tuples for aliasing (e.g., ("numpy", "np")).
+        namespace (dict, optional): Dictionary to import packages into, typically `globals()`.
+        import_into_backend (bool, optional): Whether to import packages into the global backend.
+        verbose (bool, optional): If True, prints the status of package imports.
+    
+    Usage:
+        @check_packages(["sklearn", "scipy"])
+        def my_function():
+            pass
+        
+        @check_packages([("numpy", "np"), "pandas"])
+        def another_function():
+            pass
+    """
+    if isinstance(packages, (str, tuple)):
+        packages = [packages]
+    packages = set(packages)
+
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            missing_packages = []
+            for pkg in packages:
+                pkg_name, pkg_variable = pkg if isinstance(pkg, tuple) else (pkg, pkg)
+                
+                try:
+                    package = importlib.import_module(pkg_name)
+                    if import_into_backend:
+                        globals()[pkg_variable] = package
+                    if namespace is not None:
+                        namespace[pkg_variable] = package
+                    if verbose:
+                        print(f"Importing {pkg_name} as {pkg_variable}", file=sys.stderr)
+                except ImportError:
+                    missing_packages.append(pkg_name)
+                    if verbose:
+                        print(f"Cannot import {pkg_name}.", file=sys.stderr)
+
+            if missing_packages:
+                raise ImportError(
+                    f"Please install the following Python packages to use this function: {', '.join(missing_packages)}"
+                )
+
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator

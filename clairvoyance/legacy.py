@@ -9,7 +9,7 @@ from collections import OrderedDict
 # PyData
 import pandas as pd
 import numpy as np
-import xarray as xr
+# import xarray as xr
 
 # Machine learning
 from scipy import stats
@@ -23,6 +23,7 @@ from .utils import *
 from .transformations import legacy_transform as transform
 
 # Plotting
+@check_packages([("matplotlib.pyplot","plt")])
 def plot_scores_line(
     average_scores:pd.Series, 
     sem:pd.Series, 
@@ -54,6 +55,8 @@ def plot_scores_line(
     legend_kws=dict(),
     **kwargs,
     ):
+    import matplotlib.pyplot as plt
+    
     with plt.style.context(style):
         _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
         _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
@@ -109,6 +112,7 @@ def plot_scores_line(
             ax.yaxis.grid(True)
         return fig, ax
     
+@check_packages([("matplotlib.pyplot","plt")])
 def plot_weights_bar(
     feature_weights:pd.Series, 
     title=None,
@@ -133,6 +137,8 @@ def plot_weights_bar(
     legend_kws=dict(),
     **kwargs,
     ):
+    import matplotlib.pyplot as plt
+
     with plt.style.context(style):
         _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
         _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
@@ -171,6 +177,7 @@ def plot_weights_bar(
             ax.yaxis.grid(True)
         return fig, ax
 
+@check_packages([("matplotlib.pyplot","plt"), ("seaborn", "sns")])
 def plot_weights_box(
     feature_weights:pd.DataFrame, 
     title=None,
@@ -199,6 +206,9 @@ def plot_weights_box(
     legend_kws=dict(),
     **kwargs,
     ):
+    import matplotlib.pyplot as plt
+    import seaborn as sns 
+    
     with plt.style.context(style):
         _title_kws = {"fontsize":16, "fontweight":"bold"}; _title_kws.update(title_kws)
         _xlabel_kws = {"fontsize":15}; _xlabel_kws.update(xlabel_kws)
@@ -248,6 +258,7 @@ def plot_weights_box(
             ax.yaxis.grid(True)
         return fig, ax
 
+@check_packages([("matplotlib.pyplot","plt")])
 def plot_recursive_feature_selection(
     number_of_features:pd.Series, 
     average_scores:pd.Series, 
@@ -281,6 +292,7 @@ def plot_recursive_feature_selection(
     legend_kws=dict(),
     **kwargs,
     ):
+    import matplotlib.pyplot as plt
 
     assert isinstance(number_of_features, pd.Series)
     assert isinstance(average_scores, pd.Series)
@@ -328,7 +340,8 @@ def plot_recursive_feature_selection(
         if show_ygrid:
             ax.yaxis.grid(True)
         return fig, ax
-    
+
+@check_packages([("matplotlib.pyplot","plt")])
 def plot_scores_comparison(
     number_of_features:pd.Series, 
     average_scores:pd.Series, 
@@ -370,6 +383,7 @@ def plot_scores_comparison(
     legend_kws=dict(),
     **kwargs,
     ):
+    import matplotlib.pyplot as plt
 
     assert isinstance(number_of_features, pd.Series)
     assert isinstance(average_scores, pd.Series)
@@ -1029,12 +1043,13 @@ class LegacyClairvoyanceBase(object):
                 weights = format_weights(weights)
                 return (weights, score)
 
-
+        @check_packages([("xarray","xr")])
         def _run(X, y, stratify, split_size, method, progress_message):
             """
             Internal: Distribute tasks
             # (n_space_per_iteration, 2_splits, n_classifications, n_features)
             """
+            import xarray as xr
             
             # Iterate through n_draws
             feature_weights_collection = list()

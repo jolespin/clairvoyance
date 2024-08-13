@@ -1,5 +1,5 @@
-# Change  Log
-
+#### Change  Log
+* [2024.8.13] - Made `matplotlib`, `seaborn`, and `xarray` optional as they are currently only used in `clairvoyance.legacy`
 * [2024.7.8] - Added `memory_profiler` to `.fit` and `.fit_transform` in `clairvoyance.bayesian` classes
 * [2024.7.6] - Using `get_feature_importances` from `Feature-Engine` instead of `format_weights`.
 * [2024.7.6] - Demoted `ClairvoyanceBase`, `ClairvoyanceRegression`, `ClairvoyanceClassification`, and `ClairvoyanceRecursive` to `clairvoyance.legacy.`
@@ -12,5 +12,9 @@
 * [2023.6.9] - Added `plot_scores_comparison` and `get_balanced_class_subset` for evaluating testing datasets.
 * [2023.5.25] - Added `X_testing` and `y_testing` to `recursive_feature_elimination` functions/methods.
 
-Future:
+#### Pending:
+* Test using `sktime`: 
+    * [TimeSeriesForestClassifier](https://www.sktime.net/en/stable/api_reference/auto_generated/sktime.classification.interval_based.TimeSeriesForestClassifier.html)
+    * [TimeSeriesForestRegressor](https://www.sktime.net/en/stable/api_reference/auto_generated/sktime.regression.interval_based.TimeSeriesForestRegressor.html)
+#### Future:
 * Use SHAP?
