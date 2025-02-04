@@ -2,7 +2,7 @@
 
 # Built-ins
 from ast import Or
-import os, sys, time, warnings, gzip, bz2, operator, pickle, functools, importlib
+import os, sys, time, warnings, gzip, bz2, operator, pickle, functools, importlib, copy
 from tqdm import tqdm, tqdm_notebook
 
 # PyData
@@ -559,3 +559,75 @@ def check_packages(packages, namespace=None, import_into_backend=False, verbose=
         return wrapper
 
     return decorator
+
+def check_parameter_space(estimator, param_space):
+    """
+    estimator: A sklearn-compatible estimator
+    param_space: dict with {name_param: [suggestion_type, *]}
+    
+    suggestion_types:  {"categorical", "discrete_uniform", "float", "int", "loguniform", "uniform"}
+    
+    categorical suggestion types must contain 2 items (e.g., [categorical, ['a','b','c']])
+    uniform/loguniform suggestion types must contain 3 items [uniform/loguniform, low, high]
+    float/int suggestion type must contain either 3 items [float/int, low, high]) or 4 items [float/int, low, high, {step:float/int, log:bool}]
+    """
+    # suggest_categorical()
+    # Suggest a value for the categorical parameter.
+    # suggest_discrete_uniform(name, low, high, q)
+        # Suggest a value for the discrete parameter.
+    # suggest_float(name, low, high, *[, step, log])
+        # Suggest a value for the floating point parameter.
+    # suggest_int(name, low, high, *[, step, log])
+        # Suggest a value for the integer parameter.
+    # suggest_loguniform(name, low, high)
+        # Suggest a value for the continuous parameter.
+    # suggest_uniform(name, low, high)
+        # Suggest a value for the continuous parameter.
+    
+    # Check if parameter names are valid
+    param_space = copy.deepcopy(param_space)
+    estimator_params = set(estimator.get_params(deep=True).keys())
+    query_params = set(param_space.keys())
+    assert query_params <= estimator_params, "The following parameters are not recognized for estimator {}:\n{}".format(estimator.__class__.__name__, "\n".join(sorted(query_params - estimator_params)))
+
+    suggestion_types = {"categorical", "discrete_uniform", "float", "int", "loguniform", "uniform"}
+    for k, v in param_space.items():
+        assert hasattr(v, "__iter__") & (not isinstance(v, str)), "space must be iterable"
+        assert len(v) > 1, "space must use the following format: [suggestion_type, *values] (e.g., [categorical, ['a','b','c']]\n[int, 1, 100])"
+        query_suggestion_type = v[0]
+        assert_acceptable_arguments(query_suggestion_type, suggestion_types)
+        if query_suggestion_type in {"categorical"}:
+            assert len(v) == 2, "categorical suggestion types must contain 2 items (e.g., [categorical, ['a','b','c']])"
+            assert hasattr(v[1], "__iter__") & (not isinstance(v[1], str)), "categorical suggestion types must contain 2 items [categorical, ['a','b','c']]"
+        if query_suggestion_type in {"uniform", "loguniform"}:
+            assert len(v) == 3, "uniform/loguniform suggestion types must contain 3 items [uniform/loguniform, low, high]"
+        if query_suggestion_type in {"discrete_uniform"}:
+            assert len(v) == 4, "discrete_uniform suggestion type must contain 4 items [discrete_uniform, low, high, q]"
+        if query_suggestion_type in {"float", "int"}:
+            suggest_float_int_error_message = "float/int suggestion type must contain either 3 items [float/int, low, high]) or 4 items [float/int, low, high, {step:float/int, log:bool}]"
+            assert len(v) in {3,4}, suggest_float_int_error_message
+            if len(v) == 3:
+                param_space[k] = [*v, {}]
+            if len(v) == 4:
+                query_dict = v[-1]
+                assert isinstance(query_dict, Mapping), suggest_float_int_error_message
+                query_dict = dict(query_dict)
+                assert set(query_dict.keys()) <= {"step", "log"}, suggest_float_int_error_message
+                if "step" in query_dict:
+                    assert isinstance(query_dict["step"], (float, int)), suggest_float_int_error_message
+                if "log" in query_dict:
+                    assert isinstance(query_dict["log"], bool), suggest_float_int_error_message
+                param_space[k] = [*v[:-1], query_dict]
+    return param_space
+
+def compile_parameter_space(trial, param_space):
+    params = dict()
+    for k, v in param_space.items():
+        suggestion_type = v[0]
+        suggest = getattr(trial, f"suggest_{suggestion_type}")
+        if suggestion_type in {"float", "int"}:
+            suggestion = suggest(k, *v[1:-1], **v[-1])
+        else:
+            suggestion = suggest(k, *v[1:])
+        params[k] = suggestion
+    return params

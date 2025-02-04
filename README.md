@@ -6,7 +6,7 @@
 ```
 ### Description
 
-Reimplementation of the `Clairvoyance` AutoML method from [Espinoza & Dupont et al. 2021](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1008857).  The updated version includes regression support, support for all linear/tree-based models, feature selection through modified `Feature-Engine` classes, and bayesian optimization using `Optuna`.  `Clairvoyance` has built-in (optional) functionality to natively address compositionality of data such as next-generation sequencing counts tables from genomics/transcriptomics.
+Revision of the `Clairvoyance` AutoML method from [Espinoza & Dupont et al. 2021](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1008857).  The updated version includes regression support, support for all linear/tree-based models, feature selection through modified `Feature-Engine` classes, and bayesian optimization using `Optuna`.  `Clairvoyance` has built-in (optional) functionality to natively address compositionality of data such as next-generation sequencing counts tables from genomics/transcriptomics.
 
 `Clairvoyance` is currently under active development and API is subject to change.
 
