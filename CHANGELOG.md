@@ -1,4 +1,5 @@
 #### Change  Log
+* [2025.2.19] - Added support for `check_parameter_space` and `compile_parameter_space` to handle single point values and types
 * [2025.2.19] - Added `pyexeggutor` support
 * [2025.2.4] - Moved `_check_param_space` and `_compile_param_space` to `.utils` and renamed `check_parameter_space` and `compile_parameter_space`, respectively.
 * [2024.8.13] - Made `matplotlib`, `seaborn`, and `xarray` optional as they are currently only used in `clairvoyance.legacy`
