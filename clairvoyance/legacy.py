@@ -19,7 +19,22 @@ from sklearn.base import clone, is_classifier, is_regressor
 from sklearn.exceptions import ConvergenceWarning, UndefinedMetricWarning
 
 # Clairvoyance
-from .utils import *
+from pyexeggutor import (
+    check_argument_choice,
+    write_pickle,
+    read_pickle,
+)
+
+from .utils import (
+    check_packages,
+    get_feature_importance_attribute,
+    format_cross_validation,
+    format_stratify,
+    check_testing_set,
+    compile_parameter_space,
+    format_weights,
+)
+
 from .transformations import legacy_transform as transform
 
 # Plotting
@@ -527,7 +542,7 @@ def recursive_feature_addition(
     #         optimize_testing_score = False
 
     # Transformations
-    assert_acceptable_arguments(transformation, {None,"clr","closure"})
+    check_argument_choice(transformation, {None,"clr","closure"})
     if multiplicative_replacement is None:
         multiplicative_replacement = 0.0
     if isinstance(multiplicative_replacement, str):
@@ -856,7 +871,7 @@ class LegacyClairvoyanceBase(object):
         # assert n_jobs > 0
             
         # Method
-        assert_acceptable_arguments(method, {"asymmetric", "symmetric"})
+        check_argument_choice(method, {"asymmetric", "symmetric"})
         self.method = method
             
         # Estimator
@@ -896,7 +911,7 @@ class LegacyClairvoyanceBase(object):
         self.log = log
 
         # Transformations
-        assert_acceptable_arguments(transformation, {None,"clr","closure"})
+        check_argument_choice(transformation, {None,"clr","closure"})
         self.transformation = transformation
         if multiplicative_replacement is None:
             multiplicative_replacement = 0.0
@@ -1181,7 +1196,7 @@ class LegacyClairvoyanceBase(object):
     
     def get_weights(self, minimum_score=None, metrics=[np.nanmean, stats.sem], minimim_score_too_high_action="adjust"):
         assert self.is_fitted_weights, "Please `fit` model before proceeding."
-        assert_acceptable_arguments(minimim_score_too_high_action, {"adjust", "fatal"})
+        check_argument_choice(minimim_score_too_high_action, {"adjust", "fatal"})
 
         minimum_score = -np.inf if minimum_score is None else minimum_score
         
@@ -1383,7 +1398,7 @@ class LegacyClairvoyanceBase(object):
         **kwargs,
         ):
         assert self.is_fitted_rci, "Please run `recursive_feature_addition` before proceeding."
-        assert_acceptable_arguments(weight_type, {("full_dataset","rci_weights"), ("full_dataset","clairvoyance_weights"), "cross_validation"})
+        check_argument_choice(weight_type, {("full_dataset","rci_weights"), ("full_dataset","clairvoyance_weights"), "cross_validation"})
         
         if weight_type in {("full_dataset","rci_weights"), ("full_dataset","clairvoyance_weights")}:
             fig, ax = plot_weights_bar(feature_weights=self.feature_weights_[weight_type], **kwargs)
@@ -1403,11 +1418,11 @@ class LegacyClairvoyanceBase(object):
         return copy.deepcopy(self)
     
     # def to_file(self, path:str):
-    #     write_object(self, path)  
+    #     write_pickle(self, path)  
         
     # @classmethod
     # def from_file(cls, path:str):
-    #     cls = read_object(path)
+    #     cls = read_pickle(path)
     #     return cls
         
         
@@ -1588,7 +1603,7 @@ class LegacyClairvoyanceRecursive(object):
         #     assert n_jobs > 0
             
         # Method
-        assert_acceptable_arguments(method, {"asymmetric", "symmetric"})
+        check_argument_choice(method, {"asymmetric", "symmetric"})
         self.method = method
         
         # Estimator
@@ -1613,7 +1628,7 @@ class LegacyClairvoyanceRecursive(object):
         self.param_space = param_space
             
         # Transformations
-        assert_acceptable_arguments(transformation, {None,"clr","closure"})
+        check_argument_choice(transformation, {None,"clr","closure"})
         self.transformation = transformation
         if multiplicative_replacement is None:
             multiplicative_replacement = 0.0
@@ -2072,13 +2087,13 @@ class LegacyClairvoyanceRecursive(object):
         return plot_scores_comparison(number_of_features=number_of_features, average_scores=average_scores,   testing_scores=testing_scores, **kwargs)
 
     def to_file(self, path:str):
-        write_object(self, path)  
+        write_pickle(self, path)  
 
 
         
     @classmethod
     def from_file(cls, path:str):
-        cls = read_object(path)
+        cls = read_pickle(path)
         return cls
 
 # BayesianClairvoyanceBase

@@ -2,8 +2,18 @@
 
 # Built-ins
 from ast import Or
-import os, sys, time, warnings, gzip, bz2, operator, pickle, functools, importlib, copy
-from tqdm import tqdm, tqdm_notebook
+import os
+import sys
+import time
+import warnings
+import gzip
+import bz2
+import operator
+import pickle
+import functools
+import importlib
+import copy
+from collections.abc import Mapping
 
 # PyData
 import pandas as pd
@@ -20,6 +30,10 @@ try:
 except ImportError:
     # v1.6.2
     from feature_engine.selection.base_selector import get_feature_importances
+    
+from pyexeggutor import (
+    check_argument_choice,
+)
 
 # from shap import Explainer, TreeExplainer, LinearExplainer
 # from shap.maskers import Independent
@@ -36,7 +50,7 @@ def is_nonstring_iterable(obj):
     condition_2 =  not type(obj) == str
     return all([condition_1,condition_2])
 
-def assert_acceptable_arguments(query, target, operation="le", message="Invalid option provided.  Please refer to the following for acceptable arguments:"):
+def check_argument_choice(query, target, operation="le", message="Invalid option provided.  Please refer to the following for acceptable arguments:"):
     """
     le: operator.le(a, b) : <=
     eq: operator.eq(a, b) : ==
@@ -106,7 +120,7 @@ def format_duration(t0):
 
 # Format stratified data
 def format_stratify(stratify, estimator_type:str, y:pd.Series):
-    assert_acceptable_arguments(estimator_type, {"classifier", "regressor"})
+    check_argument_choice(estimator_type, {"classifier", "regressor"})
     if isinstance(stratify, bool):
         if stratify is True:
             assert estimator_type == "classifier", "If `stratify=True` then the estimator must be a classifier.  Please provide a stratification grouping or select None for regressor."
@@ -127,7 +141,7 @@ def format_stratify(stratify, estimator_type:str, y:pd.Series):
 
 
 def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, random_state=0, cv_prefix="cv=", training_column="training_index", testing_column="testing_index", return_type=tuple):
-    assert_acceptable_arguments({return_type}, (tuple, pd.DataFrame))
+    check_argument_choice({return_type}, (tuple, pd.DataFrame))
     if return_type == tuple:
         assert np.all(X.index == y.index), "`X.index` and `y.index` must be the same ordering"
         index = X.index
@@ -313,26 +327,7 @@ def write_pickle(obj, filepath, compression="auto"):
         
 # Misc
 # ====
-# Wrapper for tqdm
-def pv(iterable, description=None, version=None, total=None, unit='it'):
-    """
-    Progress viewer
-    Wrapper for `tqdm`:
-    https://github.com/tqdm/tqdm
-    """
-    assert_acceptable_arguments([version], {None, "gui",  "notebook"})
-    func = tqdm
-    if version == "notebook":
-        func = tqdm_notebook
-    if version == "gui":
-        func = tqdm_gui
 
-    return tqdm(
-        iterable,
-        desc=description,
-        total=total,
-        unit=unit,
-   )
     
 # Flatten nested iterables
 def flatten(nested_iterable, into=list, unique=False, **kwargs_iterable):
@@ -561,7 +556,12 @@ def check_packages(packages, namespace=None, import_into_backend=False, verbose=
     return decorator
 
 def check_parameter_space(estimator, param_space):
+ 
     """
+    Check the validity of the parameter space for Bayesian hyperparameter optimization.
+
+    Parameters
+    ----------
     estimator: A sklearn-compatible estimator
     param_space: dict with {name_param: [suggestion_type, *]}
     
@@ -570,7 +570,36 @@ def check_parameter_space(estimator, param_space):
     categorical suggestion types must contain 2 items (e.g., [categorical, ['a','b','c']])
     uniform/loguniform suggestion types must contain 3 items [uniform/loguniform, low, high]
     float/int suggestion type must contain either 3 items [float/int, low, high]) or 4 items [float/int, low, high, {step:float/int, log:bool}]
-    """
+    suggest_categorical()
+        Suggest a value for the categorical parameter.
+    suggest_discrete_uniform(name, low, high, q)
+        Suggest a value for the discrete parameter.
+    suggest_float(name, low, high, *[, step, log])
+        Suggest a value for the floating point parameter.
+    suggest_int(name, low, high, *[, step, log])
+        Suggest a value for the integer parameter.
+    suggest_loguniform(name, low, high)
+        Suggest a value for the continuous parameter.
+    suggest_uniform(name, low, high)
+        Suggest a value for the continuous parameter.
+    
+    Returns
+    -------
+    param_space: Copy of the parameter space with the following modifications:
+    
+        - The parameter names must be a subset of the estimator's parameters.
+        - The suggestion type must be one of the recognized types.
+        - The parameters must be in the correct format for the suggestion type.
+        - The parameters must be in the correct order for the suggestion type.
+        - The parameters must be in the correct format for the suggestion type.
+        
+
+    ---------------------------------------------------------------
+    # suggestion_types:  {"categorical", "discrete_uniform", "float", "int", "loguniform", "uniform"}
+    
+    # categorical suggestion types must contain 2 items (e.g., [categorical, ['a','b','c']])
+    # uniform/loguniform suggestion types must contain 3 items [uniform/loguniform, low, high]
+    # float/int suggestion type must contain either 3 items [float/int, low, high]) or 4 items [float/int, low, high, {step:float/int, log:bool}]
     # suggest_categorical()
     # Suggest a value for the categorical parameter.
     # suggest_discrete_uniform(name, low, high, q)
@@ -585,6 +614,7 @@ def check_parameter_space(estimator, param_space):
         # Suggest a value for the continuous parameter.
     
     # Check if parameter names are valid
+    """
     param_space = copy.deepcopy(param_space)
     estimator_params = set(estimator.get_params(deep=True).keys())
     query_params = set(param_space.keys())
@@ -595,7 +625,7 @@ def check_parameter_space(estimator, param_space):
         assert hasattr(v, "__iter__") & (not isinstance(v, str)), "space must be iterable"
         assert len(v) > 1, "space must use the following format: [suggestion_type, *values] (e.g., [categorical, ['a','b','c']]\n[int, 1, 100])"
         query_suggestion_type = v[0]
-        assert_acceptable_arguments(query_suggestion_type, suggestion_types)
+        check_argument_choice(query_suggestion_type, suggestion_types)
         if query_suggestion_type in {"categorical"}:
             assert len(v) == 2, "categorical suggestion types must contain 2 items (e.g., [categorical, ['a','b','c']])"
             assert hasattr(v[1], "__iter__") & (not isinstance(v[1], str)), "categorical suggestion types must contain 2 items [categorical, ['a','b','c']]"
@@ -631,3 +661,18 @@ def compile_parameter_space(trial, param_space):
             suggestion = suggest(k, *v[1:])
         params[k] = suggestion
     return params
+
+# def compile_parameter_space(trial, param_space):
+# Need to combine these 2 functions
+#     params = dict()
+#     for k, v in param_space.items():
+#         if isinstance(v, list):
+#             suggestion_type = v[0]
+#             if isinstance(suggestion_type, type):
+#                 suggestion_type = suggestion_type.__name__
+#             suggest = getattr(trial, f"suggest_{suggestion_type}")
+#             suggestion = suggest(k, v[1], v[2])
+#         else:
+#             suggestion = v
+#         params[k] = suggestion
+#     return params

@@ -227,13 +227,17 @@ except ImportError:
 
 
 # Internals
+from pyexeggutor import (
+    check_argument_choice, 
+)
+
 from .utils import (
-    assert_acceptable_arguments, 
     check_testing_set, 
     format_cross_validation,
     format_feature_importances_from_cv, 
     format_feature_importances_from_data,
 )
+
 from .transformations import (
     closure, 
     clr, 
@@ -532,7 +536,7 @@ class ClairvoyanceBaseRecursiveSelector(BaseSelector):
             raise ValueError("threshold can only be integer or float")
 
         if isinstance(transformation, str):
-            assert_acceptable_arguments(transformation, {"closure", "clr", "clr_with_multiplicative_replacement"})
+            check_argument_choice(transformation, {"closure", "clr", "clr_with_multiplicative_replacement"})
             transformation = globals()[transformation]
 
         if transformation is not None:

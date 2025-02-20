@@ -22,7 +22,21 @@ from feature_engine.selection import DropConstantFeatures, DropDuplicateFeatures
 # Hyperparameter selection
 import optuna
 
-from .utils import *
+from pyexeggutor import (
+    check_argument_choice,
+    format_header,
+    write_pickle,
+    read_pickle,
+)
+
+from .utils import (
+    get_feature_importance_attribute,
+    check_parameter_space,
+    format_cross_validation,
+    check_testing_set,
+    compile_parameter_space,
+)
+
 from .transformations import (
     closure, 
     clr, 
@@ -195,7 +209,7 @@ class BayesianClairvoyanceBase(object):
         _bayesianclairvoyancebase_docstring
         
         # Method
-        assert_acceptable_arguments(feature_selection_method, {"addition", "elimination"})
+        check_argument_choice(feature_selection_method, {"addition", "elimination"})
         self.feature_selection_method = {"addition":ClairvoyanceRecursiveFeatureAddition, "elimination":ClairvoyanceRecursiveFeatureElimination}[feature_selection_method]
             
         # Estimator
@@ -250,7 +264,7 @@ class BayesianClairvoyanceBase(object):
 
         # Data
         if isinstance(transformation, str):
-            assert_acceptable_arguments(transformation, {"closure", "clr", "clr_with_multiplicative_replacement"})
+            check_argument_choice(transformation, {"closure", "clr", "clr_with_multiplicative_replacement"})
             transformation = globals()[transformation]
 
         if transformation is not None:
@@ -304,7 +318,6 @@ class BayesianClairvoyanceBase(object):
             pad*" " + "- -- --- ----- -------- -------------",
 
             pad*" " + "* Fitted: {}".format(self.is_fitted),
-            # pad*" " + "* Fitted(RCI): {}".format(self.is_fitted_rci),
             
             
             ]

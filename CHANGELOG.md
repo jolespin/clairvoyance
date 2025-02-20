@@ -1,4 +1,6 @@
 #### Change  Log
+* [2025.2.19] - Added `pyexeggutor` support
+* [2025.2.4] - Moved `_check_param_space` and `_compile_param_space` to `.utils` and renamed `check_parameter_space` and `compile_parameter_space`, respectively.
 * [2024.8.13] - Made `matplotlib`, `seaborn`, and `xarray` optional as they are currently only used in `clairvoyance.legacy`
 * [2024.7.8] - Added `memory_profiler` to `.fit` and `.fit_transform` in `clairvoyance.bayesian` classes
 * [2024.7.6] - Using `get_feature_importances` from `Feature-Engine` instead of `format_weights`.
@@ -16,5 +18,6 @@
 * Test using `sktime`: 
     * [TimeSeriesForestClassifier](https://www.sktime.net/en/stable/api_reference/auto_generated/sktime.classification.interval_based.TimeSeriesForestClassifier.html)
     * [TimeSeriesForestRegressor](https://www.sktime.net/en/stable/api_reference/auto_generated/sktime.regression.interval_based.TimeSeriesForestRegressor.html)
+    
 #### Future:
 * Use SHAP?

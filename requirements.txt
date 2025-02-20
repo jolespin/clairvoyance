@@ -6,6 +6,7 @@ scikit-learn>=1.0
 optuna>=3.6.1
 feature_engine>=1.6.2
 memory-profiler
+pyexeggutor>=2025.2.19
 #matplotlib>=2
 #seaborn>=0.10.1
 #xarray>=0.10.3

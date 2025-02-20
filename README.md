@@ -190,10 +190,10 @@ param_space = {
     "min_samples_split": ["float", 0.0, 0.5], 
     "max_features":["categorical", ["sqrt", "log2", None]],
 }
-scorer = make_scorer(mean_squared_error, greater_is_better=False)
+scorer = make_scorer(mean_squared_error, greater_is_better=False) # Not necessary to add
 
 # Fit the AutoML model
-model = BayesianClairvoyanceRegression(estimator, param_space,  n_iter=4, n_trials=10, feature_selection_method="addition", n_jobs=-1, verbose=1, feature_selection_performance_threshold=0.0)
+model = BayesianClairvoyanceRegression(estimator, param_space,  scorer=scorer, n_iter=4, n_trials=10, feature_selection_method="addition", n_jobs=-1, verbose=1, feature_selection_performance_threshold=0.0)
 df_results = model.fit_transform(X_training, y_training, cv=5, optimize_with_training_and_testing="auto", X_testing=X_testing, y_testing=y_testing)
 
 I 2024-07-06 01:30:03,567] A new study created in memory with name: n_iter=1

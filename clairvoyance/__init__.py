@@ -1,7 +1,7 @@
-__version__ = "2025.2.4"
+__version__ = "2025.2.19"
 
 from . import utils
-from . import visuals
+# from . import visuals
 from . import transformations
 from . import bayesian
 from . import legacy
