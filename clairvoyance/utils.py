@@ -23,8 +23,14 @@ from scipy.stats import sem
 # Machine learning
 from sklearn.base import clone, is_classifier, is_regressor
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.model_selection import cross_validate, RepeatedStratifiedKFold, StratifiedKFold, RepeatedKFold, KFold
-
+from sklearn.model_selection import (
+    cross_validate, 
+    RepeatedStratifiedKFold, 
+    StratifiedKFold, 
+    StratifiedGroupKFold,
+    RepeatedKFold, 
+    KFold,
+)
 try:
     from feature_engine.selection.base_selection_functions import get_feature_importances
 except ImportError:
@@ -49,23 +55,6 @@ def is_nonstring_iterable(obj):
     condition_1 = hasattr(obj, "__iter__")
     condition_2 =  not type(obj) == str
     return all([condition_1,condition_2])
-
-def check_argument_choice(query, target, operation="le", message="Invalid option provided.  Please refer to the following for acceptable arguments:"):
-    """
-    le: operator.le(a, b) : <=
-    eq: operator.eq(a, b) : ==
-    ge: operator.ge(a, b) : >=
-    """
-    # If query is not a nonstring iterable or a tuple
-    if any([
-            not is_nonstring_iterable(query),
-            isinstance(query,tuple),
-            ]):
-        query = [query]
-    query = set(query)
-    target = set(target)
-    func_operation = getattr(operator, operation)
-    assert func_operation(query,target), "{}\n{}".format(message, target)
     
 def check_testing_set(features, X_testing, y_testing):
     # Testing
@@ -100,24 +89,6 @@ def format_path(path,  into=str, absolute=False):
         path = os.path.abspath(path)
     return into(path)
 
-# Format header for printing
-def format_header(text, line_character="=", n=None):
-    if n is None:
-        n = len(text)
-    line = n*line_character
-    return "{}\n{}\n{}".format(line, text, line)
-
-# Get duration
-def format_duration(t0):
-    """
-    Adapted from @john-fouhy:
-    https://stackoverflow.com/questions/538666/python-format-timedelta-to-string
-    """
-    duration = time.time() - t0
-    hours, remainder = divmod(duration, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return "{:02}:{:02}:{:02}".format(int(hours), int(minutes), int(seconds))
-
 # Format stratified data
 def format_stratify(stratify, estimator_type:str, y:pd.Series):
     check_argument_choice(estimator_type, {"classifier", "regressor"})
@@ -141,7 +112,7 @@ def format_stratify(stratify, estimator_type:str, y:pd.Series):
 
 
 def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, random_state=0, cv_prefix="cv=", training_column="training_index", testing_column="testing_index", return_type=tuple):
-    check_argument_choice({return_type}, (tuple, pd.DataFrame))
+    check_argument_choice(return_type, (tuple, pd.DataFrame))
     if return_type == tuple:
         assert np.all(X.index == y.index), "`X.index` and `y.index` must be the same ordering"
         index = X.index
@@ -163,9 +134,9 @@ def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, rand
                 assert np.all(y.index == stratify.index), "If `stratify` is not None then it must have the same index as `y`"
                 assert stratify.dtype != float, "`stratify` cannot be floating point values"
                 if y.dtype == float:
-                    splitter = StratifiedKFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, stratify, groups=stratify)
+                    splitter = StratifiedGroupKFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, y, stratify)
                 else:
-                    splitter = StratifiedKFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, y, groups=stratify)
+                    splitter = StratifiedGroupKFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, y, y)
             else:
                 splitter = KFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, y)
 
@@ -241,90 +212,6 @@ def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, rand
         splits, labels = format_cross_validation(cv=cv, X=X, y=y, stratify=stratify, random_state=random_state, cv_prefix=cv_prefix, training_column=training_column, testing_column=testing_column, return_type=tuple)
         return pd.DataFrame(splits, index=labels, columns=[training_column, testing_column])
 
-
-# I/O
-# ====
-# Read/Write
-# ==========
-# Get file object
-def open_file_reader(filepath: str, compression="auto", binary=False):
-    """
-    Opens a file for reading with optional compression.
-
-    Args:
-        filepath (str): Path to the file.
-        compression (str, optional): Type of compression {None, 'gzip', 'bz2'}. Defaults to "auto".
-        binary (bool, optional): Whether to open the file in binary mode. Defaults to False.
-
-    Returns:
-        file object: A file-like object.
-    """
-    # Determine compression type based on the file extension if 'auto' is specified
-    if compression == "auto":
-        ext = filepath.split(".")[-1].lower()
-        if ext == "gz":
-            compression = "gzip"
-        elif ext == "bz2":
-            compression = "bz2"
-        else:
-            compression = None
-
-    # Determine the mode based on the 'binary' flag
-    mode = "rb" if binary else "rt"
-
-    # Open the file with or without compression
-    if not compression:
-        return open(filepath, mode)
-    elif compression == "gzip":
-        return gzip.open(filepath, mode)
-    elif compression == "bz2":
-        return bz2.open(filepath, mode)
-    else:
-        raise ValueError(f"Unsupported compression type: {compression}")
-            
-# Get file object
-def open_file_writer(filepath: str, compression="auto", binary=False):
-    """
-    Args:
-        filepath (str): path/to/file
-        compression (str, optional): {None, gzip, bz2}. Defaults to "auto".
-        binary (bool, optional): Whether to open the file in binary mode. Defaults to False.
-    
-    Returns:
-        file object
-    """
-    if compression == "auto":
-        ext = filepath.split(".")[-1].lower()
-        if ext == "gz":
-            compression = "gzip"
-        elif ext == "bz2":
-            compression = "bz2"
-        else:
-            compression = None
-
-    if binary:
-        mode = "wb"
-    else:
-        mode = "wt"
-
-    if not compression:
-        return open(filepath, mode)
-    elif compression == "gzip":
-        return gzip.open(filepath, mode)
-    elif compression == "bz2":
-        return bz2.open(filepath, mode)
-    else:
-        raise ValueError(f"Unsupported compression type: {compression}")
-
-# Pickle I/O
-def read_pickle(filepath, compression="auto"):
-    with open_file_reader(filepath, compression=compression, binary=True) as f:
-        return pickle.load(f)
-    
-def write_pickle(obj, filepath, compression="auto"):
-    with open_file_writer(filepath, compression=compression, binary=True) as f:
-        pickle.dump(obj, f)
-        
 # Misc
 # ====
 
@@ -555,16 +442,16 @@ def check_packages(packages, namespace=None, import_into_backend=False, verbose=
 
     return decorator
 
-def check_parameter_space(estimator, param_space):
+def check_parameter_space(param_space, estimator=None):
  
     """
     Check the validity of the parameter space for Bayesian hyperparameter optimization.
 
     Parameters
     ----------
-    estimator: A sklearn-compatible estimator
     param_space: dict with {name_param: [suggestion_type, *]}
-    
+    estimator: A sklearn-compatible estimator
+
     suggestion_types:  {"categorical", "discrete_uniform", "float", "int", "loguniform", "uniform"}
     
     categorical suggestion types must contain 2 items (e.g., [categorical, ['a','b','c']])
@@ -616,15 +503,20 @@ def check_parameter_space(estimator, param_space):
     # Check if parameter names are valid
     """
     param_space = copy.deepcopy(param_space)
-    estimator_params = set(estimator.get_params(deep=True).keys())
-    query_params = set(param_space.keys())
-    assert query_params <= estimator_params, "The following parameters are not recognized for estimator {}:\n{}".format(estimator.__class__.__name__, "\n".join(sorted(query_params - estimator_params)))
+    if estimator is not None:
+        estimator_params = set(estimator.get_params(deep=True).keys())
+        query_params = set(param_space.keys())
+        assert query_params <= estimator_params, "The following parameters are not recognized for estimator {}:\n{}".format(estimator.__class__.__name__, "\n".join(sorted(query_params - estimator_params)))
 
     suggestion_types = {"categorical", "discrete_uniform", "float", "int", "loguniform", "uniform"}
     for k, v in param_space.items():
         if isinstance(v, list):
             assert len(v) > 1, "space must use the following format: [suggestion_type, *values] (e.g., [categorical, ['a','b','c']]\n[int, 1, 100])"
             query_suggestion_type = v[0]
+            if not isinstance(query_suggestion_type, str):
+                query_suggestion_type = query_suggestion_type.__name__
+            v = [query_suggestion_type, *v[1:]]
+
             check_argument_choice(query_suggestion_type, suggestion_types)
             if query_suggestion_type in {"categorical"}:
                 assert len(v) == 2, "categorical suggestion types must contain 2 items (e.g., [categorical, ['a','b','c']])"
@@ -657,7 +549,10 @@ def compile_parameter_space(trial, param_space):
     params = dict()
     for k, v in param_space.items():
         if isinstance(v, list):
-            suggestion_type = str(v[0])
+            suggestion_type = v[0]
+            if isinstance(suggestion_type, type):
+                suggestion_type = suggestion_type.__name__
+            v = [suggestion_type, *v[1:]]
             suggest = getattr(trial, f"suggest_{suggestion_type}")
             if suggestion_type in {"float", "int"}:
                 suggestion = suggest(k, *v[1:-1], **v[-1])

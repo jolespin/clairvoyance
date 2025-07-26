@@ -1,5 +1,8 @@
 #### Change  Log
-* [2025.2.19] - Added support for `check_parameter_space` and `compile_parameter_space` to handle single point values and types
+* [2025.7.26] - Updated `training_testing_weights`
+* [2025.2.21] - Changed `verbose` behavior for `BayesianClairvoyanceBase` to supress logs.  Also in `ClairvoyanceRecursiveFeatureAddition` and `ClairvoyanceRecursiveFeatureElimination` to supress progressbar for `verbose=0`
+* [2025.2.21] - Replaced `StratifiedKFold` with `StratifiedGroupKFold` in `format_cross_validation`
+* [2025.2.19] - Added support for `check_parameter_space` and `compile_parameter_space` to handle single point values and types.  Allows `check_parameter_space` to not need estimator
 * [2025.2.19] - Added `pyexeggutor` support
 * [2025.2.4] - Moved `_check_param_space` and `_compile_param_space` to `.utils` and renamed `check_parameter_space` and `compile_parameter_space`, respectively.
 * [2024.8.13] - Made `matplotlib`, `seaborn`, and `xarray` optional as they are currently only used in `clairvoyance.legacy`
@@ -16,6 +19,7 @@
 * [2023.5.25] - Added `X_testing` and `y_testing` to `recursive_feature_elimination` functions/methods.
 
 #### Pending:
+* Add `n_cv_jobs` to all relevant classes
 * Test using `sktime`: 
     * [TimeSeriesForestClassifier](https://www.sktime.net/en/stable/api_reference/auto_generated/sktime.classification.interval_based.TimeSeriesForestClassifier.html)
     * [TimeSeriesForestRegressor](https://www.sktime.net/en/stable/api_reference/auto_generated/sktime.regression.interval_based.TimeSeriesForestRegressor.html)

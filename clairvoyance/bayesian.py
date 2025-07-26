@@ -48,7 +48,7 @@ from .feature_selection import (
 )
 
 # Memory profiling
-from memory_profiler import profile
+# from memory_profiler import profile
 
 _bayesianclairvoyancebase_docstring = """
         # Modeling parameters:
@@ -176,7 +176,7 @@ class BayesianClairvoyanceBase(object):
         study_prefix="n_iter=",
         study_timeout=None,
         study_callbacks=None,
-        training_testing_weights = [1.0,1.0],
+        training_testing_weights = [1.0,0.0],
 
         # Feature selection
         feature_selection_method:str="addition",
@@ -228,7 +228,7 @@ class BayesianClairvoyanceBase(object):
                 self.estimator.set_params(random_state=random_state)
         self.feature_weight_attribute = get_feature_importance_attribute(estimator, "auto")
         assert len(param_space) > 0, "`param_space` must have at least 1 key:[value_1, value_2, ..., value_n] pair"
-        self.param_space = check_parameter_space(estimator, param_space)
+        self.param_space = check_parameter_space(param_space, estimator)
 
         # Training testing weights
         training_testing_weights = np.asarray(training_testing_weights).astype(float)
@@ -341,7 +341,13 @@ class BayesianClairvoyanceBase(object):
             
         direction = "maximize"
         study = optuna.create_study(direction=direction, study_name=study_name, sampler=sampler, **study_kws)
-        study.optimize(_objective, n_trials=self.n_trials, timeout=self.study_timeout, show_progress_bar=self.verbose >= 2, callbacks=self.study_callbacks, gc_after_trial=True)
+        # Conditionally suppress Optuna logs
+        if self.verbose < 2:
+            optuna.logging.set_verbosity(optuna.logging.CRITICAL + 1)  # Suppress logs
+        else:
+            optuna.logging.set_verbosity(optuna.logging.INFO)  # Enable logs
+            
+        study.optimize(_objective, n_trials=self.n_trials, timeout=self.study_timeout, show_progress_bar=self.verbose > 0, callbacks=self.study_callbacks, gc_after_trial=True)
         return study
         
     def _optimize_hyperparameters_include_testing(self, X, y,  X_testing, y_testing, study_name, sampler, **study_kws): # test set here?
@@ -361,7 +367,12 @@ class BayesianClairvoyanceBase(object):
         #     direction = {"regressor":"minimize", "classifier":"maximize"}[self.estimator_type]
         directions = ["maximize", "maximize"]
         study = optuna.create_study(directions=directions, study_name=study_name, sampler=sampler, **study_kws)
-        study.optimize(_objective, n_trials=self.n_trials, timeout=self.study_timeout, show_progress_bar=self.verbose >= 2, callbacks=self.study_callbacks, gc_after_trial=True)
+        # Conditionally suppress Optuna logs
+        if self.verbose < 2:
+            optuna.logging.set_verbosity(optuna.logging.CRITICAL + 1)  # Suppress logs
+        else:
+            optuna.logging.set_verbosity(optuna.logging.INFO)  # Enable logs
+        study.optimize(_objective, n_trials=self.n_trials, timeout=self.study_timeout, show_progress_bar=self.verbose > 0, callbacks=self.study_callbacks, gc_after_trial=True)
         return study
 
     def _feature_selection(self, estimator, X, y, X_testing, y_testing, study_name):
@@ -569,7 +580,7 @@ class BayesianClairvoyanceBase(object):
         df.index.name = "study_name"
         return df
         
-    @profile
+    # @profile
     def fit(self, X, y, cv=3, X_testing=None, y_testing=None, optimize_with_training_and_testing="auto", **study_kws):
         self._fit(
             X=X,
@@ -583,7 +594,7 @@ class BayesianClairvoyanceBase(object):
         self.results_ = self._get_results()
         return self
 
-    @profile
+    # @profile
     def fit_transform(self, X, y, cv=3, X_testing=None, y_testing=None, optimize_with_training_and_testing="auto", **study_kws):
         self._fit(
             X=X,
@@ -618,8 +629,6 @@ class BayesianClairvoyanceClassification(BayesianClairvoyanceBase):
         if "scorer" not in kwargs:
             kwargs["scorer"] = "accuracy"
         super(BayesianClairvoyanceClassification, self).__init__(*args, **kwargs)
-
-        # Additional initialization for BayesianClairvoyanceClassification if needed
 
 class BayesianClairvoyanceRegression(BayesianClairvoyanceBase):
     def __init__(self, *args, **kwargs):

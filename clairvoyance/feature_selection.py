@@ -529,7 +529,7 @@ class ClairvoyanceBaseRecursiveSelector(BaseSelector):
         transformation = None,
         remove_zero_weighted_features=True,
         maximum_tries_to_remove_zero_weighted_features=100,
-        verbose=1,
+        verbose=0,
     ):
 
         if not isinstance(threshold, (int, float)):
@@ -857,7 +857,12 @@ class ClairvoyanceRecursiveFeatureAddition(ClairvoyanceBaseRecursiveSelector):
 
         # loop over the ordered list of features by feature importance starting
         # from the second element in the list.
-        for feature in tqdm(list(feature_importances_tmp.index)[1:], desc="Recursive feature addition"):
+        if self.verbose > 0:
+            iterable = tqdm(list(feature_importances_tmp.index)[1:], desc="Recursive feature addition")
+        else:
+            iterable = list(feature_importances_tmp.index)[1:]
+            
+        for feature in iterable:
             X_tmp = X[_selected_features + [feature]]
 
             # Add feature and train new model
@@ -1117,8 +1122,12 @@ class ClairvoyanceRecursiveFeatureElimination(ClairvoyanceBaseRecursiveSelector)
 
         # evaluate every feature, starting from the least important
         # remember that feature_importances_ is ordered already
-        for feature in tqdm(list(feature_importances_tmp.index), desc="Recursive feature elimination"):
-
+        if self.verbose > 0:
+            iterable = tqdm(list(feature_importances_tmp.index), desc="Recursive feature elimination")
+        else:
+            iterable = list(feature_importances_tmp.index)
+            
+        for feature in iterable:
             # if there is only 1 feature left
             if X_tmp.shape[1] == 1:
                 self.performance_drifts_[feature] = 0
