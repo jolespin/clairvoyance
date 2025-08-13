@@ -232,7 +232,7 @@ from pyexeggutor import (
 )
 
 from .utils import (
-    check_testing_set, 
+    check_validation_set, 
     format_cross_validation,
     format_feature_importances_from_cv, 
     format_feature_importances_from_data,
@@ -278,10 +278,10 @@ def remove_zero_weighted_features( # Make this easier to use. Way too specific r
     initial_feature_importances, 
     initial_feature_importances_sem,
     feature_selected_training_cv, 
-    feature_selected_testing_score=np.nan,
+    feature_selected_validation_score=np.nan,
     transformation=None,
-    X_testing=None,
-    y_testing=None,
+    X_validation=None,
+    y_validation=None,
     n_jobs=1,
     cv=3, 
     scorer="auto",
@@ -303,8 +303,8 @@ def remove_zero_weighted_features( # Make this easier to use. Way too specific r
     if isinstance(scorer, str):
         scorer = get_scorer(scorer)
         
-    # Testing set
-    testing_set_provided = check_testing_set(X.columns, X_testing, y_testing)
+    # validation set
+    validation_set_provided = check_validation_set(X.columns, X_validation, y_validation)
 
     # Initial feature importances
     feature_importances = initial_feature_importances.copy()
@@ -346,7 +346,7 @@ def remove_zero_weighted_features( # Make this easier to use. Way too specific r
                 "feature_importances":pd.Series([]), 
                 "feature_importances_sem":pd.Series([]),
                 "feature_selected_training_cv":np.asarray(cv*[np.nan]), 
-                "feature_selected_testing_score":np.nan,
+                "feature_selected_validation_score":np.nan,
             }
 
         
@@ -385,7 +385,7 @@ def remove_zero_weighted_features( # Make this easier to use. Way too specific r
                 print(msg, file=log)
                     
             # Update these and stop:
-            # selected_features, feature_importances, performance_drifts, feature_selected_training_score, feature_selected_testing_score
+            # selected_features, feature_importances, performance_drifts, feature_selected_training_score, feature_selected_validation_score
             selected_features = pd.Index(features)
             feature_importances = feature_selected_importances.loc[features]
             feature_importances_sem = feature_selected_importances_sem.loc[features]
@@ -393,18 +393,18 @@ def remove_zero_weighted_features( # Make this easier to use. Way too specific r
             feature_selected_training_score = updated_feature_selected_training_score
             feature_selected_training_cv = cv_results["test_score"]
 
-            # Testing set with updated features
-            if testing_set_provided:
+            # validation set with updated features
+            if validation_set_provided:
                 estimator.fit(X_query, y)
-                updated_feature_selected_testing_score = scorer(estimator, X_testing.loc[:,features], y_testing)
+                updated_feature_selected_validation_score = scorer(estimator, X_validation.loc[:,features], y_validation)
                 if verbose > 0:
                     # if j > 0:
-                    if updated_feature_selected_testing_score > feature_selected_testing_score:
-                        msg = "[Success][Iteration={}, Try={}]: ☺ New testing score improved from {} -> {}".format(i, j, feature_selected_testing_score, updated_feature_selected_testing_score)
+                    if updated_feature_selected_validation_score > feature_selected_validation_score:
+                        msg = "[Success][Iteration={}, Try={}]: ☺ New validation score improved from {} -> {}".format(i, j, feature_selected_validation_score, updated_feature_selected_validation_score)
                     else:
-                        msg = "[Success][Iteration={}, Try={}]: New testing score declined from {} -> {}".format(i, j, feature_selected_testing_score, updated_feature_selected_testing_score)
+                        msg = "[Success][Iteration={}, Try={}]: New validation score declined from {} -> {}".format(i, j, feature_selected_validation_score, updated_feature_selected_validation_score)
                     print(msg, file=log)
-                feature_selected_testing_score = updated_feature_selected_testing_score
+                feature_selected_validation_score = updated_feature_selected_validation_score
 
             break
         else:
@@ -418,7 +418,7 @@ def remove_zero_weighted_features( # Make this easier to use. Way too specific r
         "feature_importances":feature_importances, 
         "feature_importances_sem":feature_importances_sem,
         "feature_selected_training_cv":feature_selected_training_cv, 
-        "feature_selected_testing_score":feature_selected_testing_score,
+        "feature_selected_validation_score":feature_selected_validation_score,
     }
 
 
@@ -920,10 +920,10 @@ class ClairvoyanceRecursiveFeatureAddition(ClairvoyanceBaseRecursiveSelector):
                     initial_feature_importances=feature_selected_importances.loc[_selected_features], 
                     initial_feature_importances_sem=feature_selected_importances_sem.loc[_selected_features], 
                     feature_selected_training_cv=feature_selected_model_cv, 
-                    feature_selected_testing_score=np.nan,
+                    feature_selected_validation_score=np.nan,
                     transformation=self.transformation,
-                    X_testing=None,
-                    y_testing=None,
+                    X_validation=None,
+                    y_validation=None,
                     n_jobs=self.n_jobs,
                     cv=self.cv, 
                     scorer=self.scoring,
@@ -932,7 +932,7 @@ class ClairvoyanceRecursiveFeatureAddition(ClairvoyanceBaseRecursiveSelector):
                     verbose=self.verbose,
                     log=sys.stderr,
                     )
-                # ['selected_features', 'feature_importances', 'feature_importances_sem', 'feature_selected_training_cv', 'feature_selected_testing_performance']
+                # ['selected_features', 'feature_importances', 'feature_importances_sem', 'feature_selected_training_cv', 'feature_selected_validation_performance']
                 if len(cleaned_results["selected_features"]) >= 1:
                     _selected_features = cleaned_results["selected_features"]
                     feature_selected_importances = cleaned_results["feature_importances"]
@@ -1219,10 +1219,10 @@ class ClairvoyanceRecursiveFeatureElimination(ClairvoyanceBaseRecursiveSelector)
                     initial_feature_importances=feature_selected_importances.loc[_selected_features], 
                     initial_feature_importances_sem=feature_selected_importances_sem.loc[_selected_features], 
                     feature_selected_training_cv=feature_selected_model_cv, 
-                    feature_selected_testing_score=np.nan,
+                    feature_selected_validation_score=np.nan,
                     transformation=self.transformation,
-                    X_testing=None,
-                    y_testing=None,
+                    X_validation=None,
+                    y_validation=None,
                     n_jobs=self.n_jobs,
                     cv=self.cv, 
                     scorer=self.scoring,
@@ -1231,7 +1231,7 @@ class ClairvoyanceRecursiveFeatureElimination(ClairvoyanceBaseRecursiveSelector)
                     verbose=self.verbose,
                     log=sys.stderr,
                     )
-                # ['selected_features', 'feature_importances', 'feature_importances_sem', 'feature_selected_training_cv', 'feature_selected_testing_performance']
+                # ['selected_features', 'feature_importances', 'feature_importances_sem', 'feature_selected_training_cv', 'feature_selected_validation_performance']
             
                 _selected_features = cleaned_results["selected_features"]
                 feature_selected_importances = cleaned_results["feature_importances"]

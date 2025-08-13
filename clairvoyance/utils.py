@@ -56,23 +56,23 @@ def is_nonstring_iterable(obj):
     condition_2 =  not type(obj) == str
     return all([condition_1,condition_2])
     
-def check_testing_set(features, X_testing, y_testing):
-    # Testing
-    X_testing_is_provided = X_testing is not None
-    y_testing_is_provided = y_testing is not None
+def check_validation_set(features, X_validation, y_validation):
+    # validation
+    X_validation_is_provided = X_validation is not None
+    y_validation_is_provided = y_validation is not None
 
-    if X_testing_is_provided is not None:
-        assert y_testing_is_provided is not None, "If `X_testing` is provided then `y_testing` must be provided"
+    if X_validation_is_provided is not None:
+        assert y_validation_is_provided is not None, "If `X_validation` is provided then `y_validation` must be provided"
 
-    if y_testing_is_provided is not None:
-        assert X_testing_is_provided is not None, "If `y_testing` is provided then `X_testing` must be provided"
+    if y_validation_is_provided is not None:
+        assert X_validation_is_provided is not None, "If `y_validation` is provided then `X_validation` must be provided"
 
-    testing_set_provided = False
-    if all([X_testing_is_provided, y_testing_is_provided]):
-        assert np.all(X_testing.index == y_testing.index), "X_testing.index and y_testing.index must have the same ordering"
-        assert np.all(X_testing.columns == pd.Index(features)), "X_testing.columns and X.columns must have the same ordering"
-        testing_set_provided = True
-    return testing_set_provided
+    validation_set_provided = False
+    if all([X_validation_is_provided, y_validation_is_provided]):
+        assert np.all(X_validation.index == y_validation.index), "X_validation.index and y_validation.index must have the same ordering"
+        assert np.all(X_validation.columns == pd.Index(features)), "X_validation.columns and X.columns must have the same ordering"
+        validation_set_provided = True
+    return validation_set_provided
     
 # ==============================================================================
 # Format
@@ -111,7 +111,7 @@ def format_stratify(stratify, estimator_type:str, y:pd.Series):
     return stratify
 
 
-def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, random_state=0, cv_prefix="cv=", training_column="training_index", testing_column="testing_index", return_type=tuple):
+def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, random_state=0, cv_prefix="cv=", training_column="training_index", validation_column="validation_index", return_type=tuple):
     check_argument_choice(return_type, (tuple, pd.DataFrame))
     if return_type == tuple:
         assert np.all(X.index == y.index), "`X.index` and `y.index` must be the same ordering"
@@ -140,9 +140,9 @@ def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, rand
             else:
                 splitter = KFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, y)
 
-            for i, (training_index, testing_index) in enumerate(splitter, start=1):
+            for i, (training_index, validation_index) in enumerate(splitter, start=1):
                 id_cv = "{}{}".format(cv_prefix, i)
-                splits.append([training_index, testing_index])
+                splits.append([training_index, validation_index])
                 labels.append(id_cv)
 
             return (splits, labels)
@@ -172,26 +172,26 @@ def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, rand
             else:
                 splitter = RepeatedKFold(n_splits=cv[0], n_repeats=cv[1], random_state=random_state).split(X, y)
 
-            for i, (training_index, testing_index) in enumerate(splitter, start=1):
+            for i, (training_index, validation_index) in enumerate(splitter, start=1):
                 id_cv = "{}{}".format(cv_prefix, i)
-                splits.append([training_index, testing_index])
+                splits.append([training_index, validation_index])
                 labels.append(id_cv)
 
             return (splits, labels)
 
         # List
         if isinstance(cv, (list, np.ndarray)):
-            assert all(map(lambda query: len(query) == 2, cv)), "If `cv` is provided as a list, each element must be a sub-list of 2 indicies (i.e., training and testing indicies)"
-            cv = pd.DataFrame(cv, columns=[training_column, testing_column])
+            assert all(map(lambda query: len(query) == 2, cv)), "If `cv` is provided as a list, each element must be a sub-list of 2 indicies (i.e., training and validation indicies)"
+            cv = pd.DataFrame(cv, columns=[training_column, validation_column])
             cv.index = cv.index.map(lambda i: "{}{}".format(cv_prefix, i))
 
         # DataFrame
         if isinstance(cv, pd.DataFrame):
             cv = cv.copy()
             assert training_column in cv.columns
-            assert testing_column in cv.columns
+            assert validation_column in cv.columns
             assert np.all(cv[training_column].map(lambda x: isinstance(x, (list, np.ndarray)))), "`{}` must be either list or np.ndarray of indices".format(training_column)
-            assert np.all(cv[testing_column].map(lambda x: isinstance(x, (list, np.ndarray)))), "`{}` must be either list or np.ndarray of indices".format(testing_column)
+            assert np.all(cv[validation_column].map(lambda x: isinstance(x, (list, np.ndarray)))), "`{}` must be either list or np.ndarray of indices".format(validation_column)
 
             index_values = flatten(cv.values, into=list)
             query = index_values[0]
@@ -209,8 +209,8 @@ def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, rand
             splits = cv.values.tolist()
             return (splits, labels)
     if return_type == pd.DataFrame:
-        splits, labels = format_cross_validation(cv=cv, X=X, y=y, stratify=stratify, random_state=random_state, cv_prefix=cv_prefix, training_column=training_column, testing_column=testing_column, return_type=tuple)
-        return pd.DataFrame(splits, index=labels, columns=[training_column, testing_column])
+        splits, labels = format_cross_validation(cv=cv, X=X, y=y, stratify=stratify, random_state=random_state, cv_prefix=cv_prefix, training_column=training_column, validation_column=validation_column, return_type=tuple)
+        return pd.DataFrame(splits, index=labels, columns=[training_column, validation_column])
 
 # Misc
 # ====
