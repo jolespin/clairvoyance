@@ -99,8 +99,6 @@ _bayesianclairvoyancebase_docstring = """
                 List of callback functions that are invoked at the end of each trial. 
                 Each function must accept two parameters with the following types in this order: Study and FrozenTrial.
         
-        training_validation_weights [Default = [1.0,1.0]]:
-                Training and validation multipliers to use in multi-objective optimization
 
         # Feature selection
         # =================
@@ -176,7 +174,6 @@ class BayesianClairvoyanceBase(object):
         study_prefix="n_iter=",
         study_timeout=None,
         study_callbacks=None,
-        training_validation_weights = [1.0,0.0],
 
         # Feature selection
         feature_selection_method:str="addition",
@@ -230,14 +227,6 @@ class BayesianClairvoyanceBase(object):
         assert len(param_space) > 0, "`param_space` must have at least 1 key:[value_1, value_2, ..., value_n] pair"
         self.param_space = check_parameter_space(param_space, estimator)
 
-        # Training validation weights
-        training_validation_weights = np.asarray(training_validation_weights).astype(float)
-        msg = "`training_validation_weights` must be a float vector with values in the range [0,1]"
-        assert training_validation_weights.size == 2, msg
-        assert np.min(training_validation_weights) >= 0, msg
-        assert np.max(training_validation_weights) <= 1, msg
-        self.training_validation_weights = training_validation_weights
-        
 
         # Set attributes
         self.name = name
@@ -326,7 +315,7 @@ class BayesianClairvoyanceBase(object):
 
     
 
-    def _optimize_hyperparameters(self, X, y, study_name, sampler, **study_kws): # test set here?
+    def _optimize_hyperparameters(self, X, y, study_name, sampler, **study_kws):
         def _objective(trial):
 
             # Compile parameters
@@ -350,31 +339,6 @@ class BayesianClairvoyanceBase(object):
         study.optimize(_objective, n_trials=self.n_trials, timeout=self.study_timeout, show_progress_bar=self.verbose > 0, callbacks=self.study_callbacks, gc_after_trial=True)
         return study
         
-    def _optimize_hyperparameters_include_validation(self, X, y,  X_validation, y_validation, study_name, sampler, **study_kws): # test set here?
-        def _objective(trial):
-
-            # Compile parameters
-            params = compile_parameter_space(trial, self.param_space)
-            estimator = clone(self.estimator)
-            estimator.set_params(**params)
-            estimator.fit(X, y)
-            validation_score = self.scorer(estimator, X_validation, y_validation)
-            
-            cv_results = cross_val_score(estimator, X, y, scoring=self.scorer, n_jobs=self.n_jobs, cv=self.cv_splits_)
-
-            return [cv_results.mean(), validation_score]
-        # if direction == "auto":
-        #     direction = {"regressor":"minimize", "classifier":"maximize"}[self.estimator_type]
-        directions = ["maximize", "maximize"]
-        study = optuna.create_study(directions=directions, study_name=study_name, sampler=sampler, **study_kws)
-        # Conditionally suppress Optuna logs
-        if self.verbose < 2:
-            optuna.logging.set_verbosity(optuna.logging.CRITICAL + 1)  # Suppress logs
-        else:
-            optuna.logging.set_verbosity(optuna.logging.INFO)  # Enable logs
-        study.optimize(_objective, n_trials=self.n_trials, timeout=self.study_timeout, show_progress_bar=self.verbose > 0, callbacks=self.study_callbacks, gc_after_trial=True)
-        return study
-
     def _feature_selection(self, estimator, X, y, X_validation, y_validation, study_name):
 
             # initial_validation_score = np.nan
@@ -412,7 +376,7 @@ class BayesianClairvoyanceBase(object):
             # Show the feature weights be scaled? Before or after
             return (selected_features, model_fs.initial_feature_importances_, model_fs.feature_selected_importances_, model_fs.performance_drifts_, feature_selected_training_cv, feature_selected_validation_score)
                 
-    def _fit(self, X, y, cv, X_validation=None, y_validation=None, optimize_with_training_and_validation="auto", **study_kws): # How to use the test set here?
+    def _fit(self, X, y, cv, X_validation=None, y_validation=None, **study_kws):
         if self.copy_X:
             self.X_ = X.copy()
         if self.copy_y:
@@ -423,11 +387,7 @@ class BayesianClairvoyanceBase(object):
         
         # validation
         self.validation_set_provided = check_validation_set(X.columns, X_validation, y_validation)
-        if optimize_with_training_and_validation == "auto":
-            optimize_with_training_and_validation = self.validation_set_provided
-        if optimize_with_training_and_validation:
-            assert self.validation_set_provided, "If `optimize_with_training_and_validation=True` then X_validation and y_validation must be provided."
-            
+
         self.studies_ = OrderedDict()
         self.results_ = OrderedDict()
         self.feature_weights_ = OrderedDict()
@@ -473,58 +433,30 @@ class BayesianClairvoyanceBase(object):
                     # Study
                     study_name = f"{self.study_prefix}{i}"
                     sampler = optuna.samplers.TPESampler(seed=self.random_state + i)
-                    if optimize_with_training_and_validation:
-                        self.multiobjective_ = True
-                        study = self._optimize_hyperparameters_include_validation(
-                            X=X.loc[:,query_features], 
-                            y=y, 
-                            X_validation=X_validation.loc[:,query_features], 
-                            y_validation=y_validation, 
-                            study_name=study_name, 
-                            sampler=sampler, 
-                            **study_kws,
-                        )
-                    else:
-                        self.multiobjective_ = False
-                        study = self._optimize_hyperparameters(
-                            X=X.loc[:,query_features], 
-                            y=y,
-                            study_name=study_name, 
-                            sampler=sampler, 
-                            **study_kws,
-                        )
+                    study = self._optimize_hyperparameters(
+                        X=X.loc[:,query_features],
+                        y=y,
+                        study_name=study_name,
+                        sampler=sampler,
+                        **study_kws,
+                    )
                     self.studies_[study_name] = study
 
                     # Fit
                     initial_validation_score = np.nan
                     best_estimator = clone(self.estimator)
 
-                    if optimize_with_training_and_validation:
-                        # Determine best trial from multiobjective study
-                        weighted_scores = list()
-                        for trial in study.best_trials:
-                            scores = trial.values
-                            ws = np.mean(scores * self.training_validation_weights)
-                            weighted_scores.append(ws)
-                        best_trial = study.best_trials[np.argmax(weighted_scores)]
-                        initial_training_score, initial_validation_score = best_trial.values
+                    best_trial = study.best_trial
+                    initial_training_score = study.best_value
 
-                        # Refit estimator with best params
-                        best_params = best_trial.params
-                        best_estimator.set_params(**best_params)
-                        best_estimator.fit(X.loc[:,query_features], y)
-                    else:
-                        best_trial = study.best_trial
-                        initial_training_score = study.best_value
+                    # Refit estimator with best params
+                    best_params = study.best_params
+                    best_estimator.set_params(**best_params)
+                    best_estimator.fit(X.loc[:,query_features], y)
 
-                        # Refit estimator with best params
-                        best_params = study.best_params
-                        best_estimator.set_params(**best_params)
-                        best_estimator.fit(X.loc[:,query_features], y)
-
-                        # Get initial validation score
-                        if self.validation_set_provided:
-                            initial_validation_score = self.scorer(best_estimator, X_validation.loc[:,query_features], y_validation)
+                    # Get initial validation score
+                    if self.validation_set_provided:
+                        initial_validation_score = self.scorer(best_estimator, X_validation.loc[:,query_features], y_validation)
                         
                     # # Feature selection
                     selected_features, initial_feature_weights, feature_weights, feature_selection_performance_drifts, feature_selected_training_cv, feature_selected_validation_score = self._feature_selection(
@@ -581,28 +513,26 @@ class BayesianClairvoyanceBase(object):
         return df
         
     # @profile
-    def fit(self, X, y, cv=3, X_validation=None, y_validation=None, optimize_with_training_and_validation="auto", **study_kws):
+    def fit(self, X, y, cv=3, X_validation=None, y_validation=None, **study_kws):
         self._fit(
             X=X,
             y=y,
             cv=cv,
             X_validation=X_validation,
             y_validation=y_validation,
-            optimize_with_training_and_validation=optimize_with_training_and_validation,
             **study_kws,
         )
         self.results_ = self._get_results()
         return self
 
     # @profile
-    def fit_transform(self, X, y, cv=3, X_validation=None, y_validation=None, optimize_with_training_and_validation="auto", **study_kws):
+    def fit_transform(self, X, y, cv=3, X_validation=None, y_validation=None, **study_kws):
         self._fit(
             X=X,
             y=y,
             cv=cv,
             X_validation=X_validation,
             y_validation=y_validation,
-            optimize_with_training_and_validation=optimize_with_training_and_validation,
             **study_kws,
         )
         self.results_ = self._get_results()

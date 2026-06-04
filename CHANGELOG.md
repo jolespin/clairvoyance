@@ -1,4 +1,6 @@
 #### Change  Log
+* [2026.6.3] - Removed `optimize_with_training_and_validation` and `training_validation_weights` from `BayesianClairvoyanceBase`. Validation set is now used only for monitoring/reporting, never for hyperparameter optimization.
+* [2026.6.3] - Fixed `format_cross_validation` reverting `StratifiedGroupKFold` back to `StratifiedKFold`. Using `StratifiedGroupKFold` with `groups=y` created degenerate CV splits where each fold's test set contained only one class, resulting in 0% accuracy.
 * [2025.7.26] - Updated `training_testing_weights`
 * [2025.2.21] - Changed `verbose` behavior for `BayesianClairvoyanceBase` to supress logs.  Also in `ClairvoyanceRecursiveFeatureAddition` and `ClairvoyanceRecursiveFeatureElimination` to supress progressbar for `verbose=0`
 * [2025.2.21] - Replaced `StratifiedKFold` with `StratifiedGroupKFold` in `format_cross_validation`

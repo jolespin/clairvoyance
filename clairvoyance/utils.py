@@ -27,8 +27,7 @@ from sklearn.model_selection import (
     cross_validate, 
     RepeatedStratifiedKFold, 
     StratifiedKFold, 
-    StratifiedGroupKFold,
-    RepeatedKFold, 
+    RepeatedKFold,
     KFold,
 )
 try:
@@ -133,10 +132,7 @@ def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, rand
                 assert isinstance(stratify, pd.Series), "If `stratify` is not None, it must be a pd.Series"
                 assert np.all(y.index == stratify.index), "If `stratify` is not None then it must have the same index as `y`"
                 assert stratify.dtype != float, "`stratify` cannot be floating point values"
-                if y.dtype == float:
-                    splitter = StratifiedGroupKFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, y, stratify)
-                else:
-                    splitter = StratifiedGroupKFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, y, y)
+                splitter = StratifiedKFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, y)
             else:
                 splitter = KFold(n_splits=cv, random_state=random_state, shuffle=False if random_state is None else True).split(X, y)
 
@@ -165,10 +161,7 @@ def format_cross_validation(cv, X:pd.DataFrame, y:pd.Series, stratify=True, rand
                 assert isinstance(stratify, pd.Series), "If `stratify` is not None, it must be a pd.Series"
                 assert np.all(y.index == stratify.index), "If `stratify` is not None then it must have the same index as `y`"
                 assert stratify.dtype != float, "`stratify` cannot be floating point values"
-                if y.dtype == float:
-                    splitter = RepeatedStratifiedKFold(n_splits=cv[0], n_repeats=cv[1], random_state=random_state).split(X, stratify, groups=stratify)
-                else:
-                    splitter = RepeatedStratifiedKFold(n_splits=cv[0], n_repeats=cv[1], random_state=random_state).split(X, y, groups=stratify)
+                splitter = RepeatedStratifiedKFold(n_splits=cv[0], n_repeats=cv[1], random_state=random_state).split(X, y)
             else:
                 splitter = RepeatedKFold(n_splits=cv[0], n_repeats=cv[1], random_state=random_state).split(X, y)
 

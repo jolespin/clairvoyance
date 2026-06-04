@@ -1,4 +1,4 @@
-__version__ = "2025.8.13"
+__version__ = "2026.6.3"
 
 from . import utils
 from . import transformations
